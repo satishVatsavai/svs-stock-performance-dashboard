@@ -208,8 +208,11 @@ print(f"📊 Currently holding {len(currently_held_tickers)} out of {len(ticker_
 # --- STEP 3: GET LIVE PRICES FOR HELD STOCKS ONLY ---
 if currently_held_tickers:
     with st.spinner('Fetching live prices and company names from Yahoo Finance and NSE...'):
+        # Fetch current prices for ALL tickers that we currently hold
         market_data = {}
         company_names = {}
+        previous_close_data = {}  # Store previous close prices for daily change calculation
+        
         for ticker in currently_held_tickers:
             # Check if this is an SGB
             is_sgb = df[df['Ticker'] == ticker]['Is_SGB'].iloc[0] if 'Is_SGB' in df.columns else False
@@ -257,13 +260,20 @@ if currently_held_tickers:
                             info.get('previousClose') or
                             info.get('regularMarketPreviousClose'))
                     
+                    # Get previous close for daily change calculation
+                    prev_close = info.get('regularMarketPreviousClose') or info.get('previousClose')
+                    
                     if price is None:
                         # Fallback: get historical data
                         hist = stock.history(period="1mo")
                         if not hist.empty:
                             price = hist['Close'].iloc[-1]
+                            # Try to get previous close from history
+                            if len(hist) >= 2:
+                                prev_close = hist['Close'].iloc[-2]
                     
                     market_data[ticker] = price
+                    previous_close_data[ticker] = prev_close if prev_close else price
                     print(f"✅ Fetched {ticker}: {company_name} @ {price}")
                 except Exception as e:
                     print(f"⚠️ Could not fetch price for {ticker}: {str(e)}")
@@ -274,6 +284,7 @@ if currently_held_tickers:
     portfolio_rows = []
     total_invested_inr = 0.0
     current_value_inr = 0.0
+    previous_day_value_inr = 0.0  # Track previous day's portfolio value
     total_realized_profit = 0.0
     
     # Prepare cash flows for XIRR calculation
@@ -346,6 +357,10 @@ if currently_held_tickers:
             # Current Value (Qty * Current Market Price)
             current_amt = float(current_qty) * float(current_price) * float(fx_rate)
             
+            # Previous Day Value (Qty * Previous Close Price)
+            prev_close_price = previous_close_data.get(ticker, current_price)
+            previous_day_amt = float(current_qty) * float(prev_close_price) * float(fx_rate)
+            
             # Calculate P/L
             pl_amt = current_amt - invested_amt
             
@@ -355,6 +370,7 @@ if currently_held_tickers:
             # Add to totals
             total_invested_inr += invested_amt
             current_value_inr += current_amt
+            previous_day_value_inr += previous_day_amt
 
             # Add to our list for the table (with 2 decimal point rounding)
             portfolio_rows.append({
@@ -383,22 +399,29 @@ if currently_held_tickers:
     except:
         xirr_percentage = 0
 
+    # Calculate daily change
+    daily_change_inr = current_value_inr - previous_day_value_inr
+    daily_change_pct = ((current_value_inr - previous_day_value_inr) / previous_day_value_inr) * 100 if previous_day_value_inr > 0 else 0
+
     # --- STEP 4: VISUALIZE ---
-    # Top level metrics
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # Top level metrics - now with 6 columns instead of 7
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("Total Invested", f"₹{format_indian_number(total_invested_inr)}")
     col2.metric("Current Value", f"₹{format_indian_number(current_value_inr)}")
     
     # Calculate total unrealized P&L
     total_unrealized_pl = current_value_inr - total_invested_inr
-    col3.metric("Unrealized P&L", f"₹{format_indian_number(total_unrealized_pl)}", delta=f"{format_indian_number(total_unrealized_pl)}")
+    col3.metric("Unrealized P&L", f"₹{format_indian_number(total_unrealized_pl)}")
     
     # Show realized profit from sells
-    col4.metric("Realized Profit", f"₹{format_indian_number(total_realized_profit)}", delta=f"{format_indian_number(total_realized_profit)}")
+    col4.metric("Realized Profit", f"₹{format_indian_number(total_realized_profit)}")
     
-    # Show XIRR
-    col5.metric("XIRR", f"{xirr_percentage:.2f}%")
-
+    # Show Daily Change
+    col5.metric("Daily Change", f"₹{format_indian_number(daily_change_inr)}", delta=f"{daily_change_pct:.2f}%")
+    
+    # Show XIRR at the end
+    col6.metric("XIRR", f"{xirr_percentage:.2f}%")
+    
     st.markdown("---")
     
     # Create tabs for Portfolio and Trade Book
