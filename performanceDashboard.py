@@ -10,6 +10,28 @@ import os
 st.set_page_config(page_title="SV's Portfolio", layout="wide")
 st.title("📊 SV's Stock Portfolio")
 
+# --- HELPER FUNCTION: FORMAT NUMBER IN INDIAN STYLE ---
+def format_indian_number(number):
+    """Format number with Indian numbering system (lakhs and crores)"""
+    s = str(int(round(number)))
+    if len(s) <= 3:
+        return s
+    
+    # Separate last 3 digits
+    last_three = s[-3:]
+    remaining = s[:-3]
+    
+    # Add commas every 2 digits from right to left for remaining digits
+    result = ""
+    while len(remaining) > 2:
+        result = "," + remaining[-2:] + result
+        remaining = remaining[:-2]
+    
+    if remaining:
+        result = remaining + result
+    
+    return result + "," + last_three
+
 # --- HELPER FUNCTION: GET HISTORICAL EXCHANGE RATE ---
 @st.cache_data
 def get_exchange_rate(currency, trade_date):
@@ -71,6 +93,9 @@ try:
     df = pd.concat(df_list, ignore_index=True)
     print(f"✅ Total trades loaded: {len(df)}")
     
+    # Normalize the Type column to uppercase (to handle 'Buy'/'BUY', 'Sell'/'SELL')
+    df['Type'] = df['Type'].str.upper()
+    
     # Convert 'Date' column to actual datetime objects so Python understands them
     df['Date'] = pd.to_datetime(df['Date'])
     
@@ -98,6 +123,9 @@ for ticker in ticker_list:
     # Only include tickers with meaningful holdings (>= 0.02)
     if current_qty >= 0.02:
         currently_held_tickers.append(ticker)
+        print(f"✅ Holding {ticker}: {current_qty:.4f} shares")
+    else:
+        print(f"⏭️ Skipping {ticker}: {current_qty:.4f} shares (below threshold)")
 
 print(f"📊 Currently holding {len(currently_held_tickers)} out of {len(ticker_list)} tickers (ignoring fractional shares < 0.001)")
 
@@ -189,11 +217,14 @@ if currently_held_tickers:
         
         # Only process holdings for tickers we currently hold
         if current_qty >= 0.001 and ticker in currently_held_tickers:
+            print(f"🔍 Processing {ticker} for holdings display: qty={current_qty:.4f}")
+            
             # Get latest price from our Yahoo download
             if ticker in market_data and market_data[ticker] is not None:
                 current_price = market_data[ticker]
+                print(f"  ✅ Got price for {ticker}: {current_price}")
             else:
-                print(f"⚠️ Could not fetch price for {ticker}, skipping...")
+                print(f"  ⚠️ Could not fetch price for {ticker}, skipping...")
                 continue
             
             # Get the exchange rate (taking the first one found for this ticker)
@@ -223,10 +254,11 @@ if currently_held_tickers:
                 "Avg Buy Price": round(avg_buy_price, 2),
                 "Current Price": round(current_price, 2),
                 "Currency": currency,
-                "Invested (INR)": round(invested_amt, 2),
-                "Current Value (INR)": round(current_amt, 2),
-                "P&L (INR)": round(current_amt - invested_amt, 2)
+                "Invested (INR)": format_indian_number(invested_amt),
+                "Current Value (INR)": format_indian_number(current_amt),
+                "P&L (INR)": format_indian_number(current_amt - invested_amt)
             })
+            print(f"  ✅ Added {ticker} to portfolio display")
     
     # Add current portfolio value as final cash flow (positive = current value)
     if current_value_inr > 0:
@@ -243,15 +275,15 @@ if currently_held_tickers:
     # --- STEP 4: VISUALIZE ---
     # Top level metrics
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Total Invested", f"₹{total_invested_inr:,.0f}")
-    col2.metric("Current Value", f"₹{current_value_inr:,.0f}")
+    col1.metric("Total Invested", f"₹{format_indian_number(total_invested_inr)}")
+    col2.metric("Current Value", f"₹{format_indian_number(current_value_inr)}")
     
     # Calculate total unrealized P&L
     total_unrealized_pl = current_value_inr - total_invested_inr
-    col3.metric("Unrealized P&L", f"₹{total_unrealized_pl:,.0f}", delta=f"{total_unrealized_pl:,.0f}")
+    col3.metric("Unrealized P&L", f"₹{format_indian_number(total_unrealized_pl)}", delta=f"{format_indian_number(total_unrealized_pl)}")
     
     # Show realized profit from sells
-    col4.metric("Realized Profit", f"₹{total_realized_profit:,.0f}", delta=f"{total_realized_profit:,.0f}")
+    col4.metric("Realized Profit", f"₹{format_indian_number(total_realized_profit)}", delta=f"{format_indian_number(total_realized_profit)}")
     
     # Show XIRR
     col5.metric("XIRR", f"{xirr_percentage:.2f}%")
@@ -260,7 +292,7 @@ if currently_held_tickers:
     
     # Detailed Dataframe
     st.subheader("Holdings Breakdown")
-    st.dataframe(pd.DataFrame(portfolio_rows), height=1050)  # 30 rows * 35px per row
+    st.dataframe(pd.DataFrame(portfolio_rows), height=900, hide_index=True)  # 30 rows * 35px per row
     
     st.markdown("---")
     
@@ -271,7 +303,7 @@ if currently_held_tickers:
     df_sorted = df.sort_values('Date', ascending=False)
     
     # Pagination settings
-    rows_per_page = 10
+    rows_per_page = 100
     total_trades = len(df_sorted)
     total_pages = (total_trades - 1) // rows_per_page + 1
     
@@ -299,7 +331,7 @@ if currently_held_tickers:
     # Display paginated trades
     page_data = df_sorted.iloc[start_idx:end_idx].copy()
     page_data['Date'] = page_data['Date'].dt.strftime('%Y-%m-%d')
-    st.dataframe(page_data, use_container_width=True)
+    st.dataframe(page_data, use_container_width=True, height=3540, hide_index=True)
     
     st.caption(f"Showing trades {start_idx + 1} to {end_idx} of {total_trades} total trades")
 
