@@ -49,8 +49,8 @@ try:
         st.error("❌ No trade files found. Please add files named 'trades*.csv' (e.g., trades.csv, trades2024.csv, etc.)")
         st.stop()
     
-    # Display which files are being loaded
-    st.info(f"📂 Loading {len(trade_files)} file(s): {', '.join(trade_files)}")
+    # Display which files are being loaded (in terminal)
+    print(f"📂 Loading {len(trade_files)} file(s): {', '.join(trade_files)}")
     
     # Read and combine all trade files
     df_list = []
@@ -59,9 +59,9 @@ try:
             temp_df = pd.read_csv(file, encoding='utf-8', on_bad_lines='skip')
             temp_df['Source_File'] = file  # Track which file each trade came from
             df_list.append(temp_df)
-            st.success(f"✅ Loaded {file} ({len(temp_df)} trades)")
+            print(f"✅ Loaded {file} ({len(temp_df)} trades)")
         except Exception as e:
-            st.warning(f"⚠️ Error reading {file}: {str(e)}")
+            print(f"⚠️ Error reading {file}: {str(e)}")
     
     if not df_list:
         st.error("❌ Could not load any trade files successfully.")
@@ -69,6 +69,7 @@ try:
     
     # Combine all dataframes into one
     df = pd.concat(df_list, ignore_index=True)
+    print(f"✅ Total trades loaded: {len(df)}")
     
     # Convert 'Date' column to actual datetime objects so Python understands them
     df['Date'] = pd.to_datetime(df['Date'])
@@ -79,21 +80,32 @@ try:
             lambda row: get_exchange_rate(row['Currency'], row['Date']),
             axis=1
         )
-    
-    st.success(f"✅ Total trades loaded: {len(df)}")
 except Exception as e:
     st.error(f"❌ Error reading CSV files: {str(e)}")
     st.stop()
 
-# --- STEP 2: GET LIVE PRICES ---
-# Get list of unique tickers to fetch from Yahoo Finance
+# --- STEP 2: CALCULATE CURRENT HOLDINGS ---
+# First, determine which tickers we currently hold
 ticker_list = df['Ticker'].unique().tolist()
+currently_held_tickers = []
 
-if ticker_list:
+for ticker in ticker_list:
+    ticker_trades = df[df['Ticker'] == ticker]
+    buy_qty = ticker_trades[ticker_trades['Type'] == 'BUY']['Qty'].sum()
+    sell_qty = ticker_trades[ticker_trades['Type'] == 'SELL']['Qty'].sum()
+    current_qty = buy_qty - sell_qty
+    
+    if current_qty > 0:
+        currently_held_tickers.append(ticker)
+
+print(f"📊 Currently holding {len(currently_held_tickers)} out of {len(ticker_list)} tickers")
+
+# --- STEP 3: GET LIVE PRICES FOR HELD STOCKS ONLY ---
+if currently_held_tickers:
     with st.spinner('Fetching live prices and company names from Yahoo Finance...'):
         market_data = {}
         company_names = {}
-        for ticker in ticker_list:
+        for ticker in currently_held_tickers:
             try:
                 # Use Ticker object for more reliable price fetching
                 stock = yf.Ticker(ticker)
@@ -119,12 +131,13 @@ if ticker_list:
                         price = hist['Close'].iloc[-1]
                 
                 market_data[ticker] = price
+                print(f"✅ Fetched {ticker}: {company_name} @ {price}")
             except Exception as e:
-                st.warning(f"⚠️ Could not fetch price for {ticker}: {str(e)}")
+                print(f"⚠️ Could not fetch price for {ticker}: {str(e)}")
                 market_data[ticker] = None
                 company_names[ticker] = ticker
     
-    # --- STEP 3: CALCULATE HOLDINGS AND REALIZED PROFIT ---
+    # --- STEP 4: CALCULATE HOLDINGS AND REALIZED PROFIT ---
     portfolio_rows = []
     total_invested_inr = 0.0
     current_value_inr = 0.0
@@ -134,6 +147,7 @@ if ticker_list:
     cash_flows = []
     cash_flow_dates = []
 
+    # Process ALL tickers for cash flows and realized profit calculation
     for ticker in ticker_list:
         # Filter the main table to get only trades for this specific stock
         ticker_trades = df[df['Ticker'] == ticker]
@@ -172,13 +186,13 @@ if ticker_list:
         
         current_qty = buy_qty - sell_qty
         
-        # Only process if we actually hold the stock
-        if current_qty > 0:
+        # Only process holdings for tickers we currently hold
+        if current_qty > 0 and ticker in currently_held_tickers:
             # Get latest price from our Yahoo download
             if ticker in market_data and market_data[ticker] is not None:
                 current_price = market_data[ticker]
             else:
-                st.warning(f"⚠️ Could not fetch price for {ticker}, skipping...")
+                print(f"⚠️ Could not fetch price for {ticker}, skipping...")
                 continue
             
             # Get the exchange rate (taking the first one found for this ticker)
@@ -245,7 +259,7 @@ if ticker_list:
     
     # Detailed Dataframe
     st.subheader("Holdings Breakdown")
-    st.dataframe(pd.DataFrame(portfolio_rows))
+    st.dataframe(pd.DataFrame(portfolio_rows), height=1050)  # 30 rows * 35px per row
     
     st.markdown("---")
     
