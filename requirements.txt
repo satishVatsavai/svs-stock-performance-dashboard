@@ -1,6 +1,9 @@
 streamlit
 pandas
-yfinance
+yfinance==0.2.41
 pyxirr
 nsepython
 requests
+python-telegram-bot
+schedule
+python-dotenv
