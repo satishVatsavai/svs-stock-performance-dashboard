@@ -95,10 +95,11 @@ for ticker in ticker_list:
     sell_qty = ticker_trades[ticker_trades['Type'] == 'SELL']['Qty'].sum()
     current_qty = buy_qty - sell_qty
     
-    if current_qty > 0:
+    # Only include tickers with meaningful holdings (>= 0.02)
+    if current_qty >= 0.02:
         currently_held_tickers.append(ticker)
 
-print(f"📊 Currently holding {len(currently_held_tickers)} out of {len(ticker_list)} tickers")
+print(f"📊 Currently holding {len(currently_held_tickers)} out of {len(ticker_list)} tickers (ignoring fractional shares < 0.001)")
 
 # --- STEP 3: GET LIVE PRICES FOR HELD STOCKS ONLY ---
 if currently_held_tickers:
@@ -187,7 +188,7 @@ if currently_held_tickers:
         current_qty = buy_qty - sell_qty
         
         # Only process holdings for tickers we currently hold
-        if current_qty > 0 and ticker in currently_held_tickers:
+        if current_qty >= 0.001 and ticker in currently_held_tickers:
             # Get latest price from our Yahoo download
             if ticker in market_data and market_data[ticker] is not None:
                 current_price = market_data[ticker]
