@@ -98,9 +98,63 @@ def convert(input_path: Path, output_path: Path):
 
 
 if __name__ == '__main__':
-    in_file = Path('tradebook-BU5086-MF-2025.csv')
-    out_file = Path('massaged_MF_trades.csv')
-    if not in_file.exists():
-        print(f"Input file not found: {in_file}")
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Convert MF tradebook(s) to local format')
+    parser.add_argument('inputs', nargs='*', help='Input CSV files to convert. If empty, all files matching "trades*MF*.csv" will be processed')
+    args = parser.parse_args()
+
+    files = args.inputs or [str(p) for p in Path('.').glob('trades*MF*.csv')]
+    if not files:
+        print('No input files provided and no files matching pattern "trades*MF*.csv" found in current directory.')
         raise SystemExit(1)
-    convert(in_file, out_file)
+
+    for f in files:
+        in_file = Path(f)
+        if not in_file.exists():
+            print(f"Skipping missing file: {in_file}")
+            continue
+
+        out_file = in_file.with_name('massaged_' + in_file.name)
+        mapping_file = in_file.with_name('mapping_' + in_file.stem + '.csv')
+
+        try:
+            # Convert and get mapping via resolution step
+            df = pd.read_csv(in_file)
+            required = ["symbol", "isin", "trade_date", "trade_type", "quantity", "price"]
+            missing = [c for c in required if c not in df.columns]
+            if missing:
+                print(f"Skipping {in_file}: missing columns {missing}")
+                continue
+
+            unique_names = df['symbol'].unique()
+            mapping = {}
+            print(f"Resolving {len(unique_names)} unique fund names in {in_file}...")
+            for i, name in enumerate(unique_names, 1):
+                isin = df.loc[df['symbol'] == name, 'isin'].iloc[0] if 'isin' in df.columns else None
+                ticker = resolve_ticker(name, isin=isin)
+                mapping[name] = ticker
+                print(f"[{i}/{len(unique_names)}] {name} -> {ticker}")
+
+            out = pd.DataFrame()
+            out['Date'] = pd.to_datetime(df['trade_date']).dt.date
+            out['Ticker'] = df['symbol'].map(mapping)
+            out['Country'] = 'IND'
+            out['Type'] = df['trade_type'].str.upper()
+            out['Qty'] = df['quantity']
+            out['Price'] = df['price']
+            out['Currency'] = 'INR'
+
+            out.to_csv(out_file, index=False)
+            print(f"Saved {len(out)} rows to {out_file}")
+
+            # Save mapping for manual review
+            with open(mapping_file, 'w', newline='', encoding='utf-8') as mf:
+                writer = csv.writer(mf)
+                writer.writerow(['SchemeName', 'ResolvedTicker'])
+                for k, v in mapping.items():
+                    writer.writerow([k, v])
+            print(f"Saved mapping to {mapping_file}")
+
+        except Exception as e:
+            print(f"Error processing {in_file}: {e}")
