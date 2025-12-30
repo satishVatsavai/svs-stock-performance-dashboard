@@ -5,6 +5,18 @@ from pyxirr import xirr
 from datetime import date
 import glob
 import os
+import requests
+def nse_get_advances_declines(*args, **kwargs):
+    """Stub for `nse_get_advances_declines` to avoid importing heavy
+    binary dependencies at module import time.
+
+    Installing `nsepython` (and its dependencies like SciPy) is optional;
+    this stub allows the dashboard to import and run in minimal
+    environments. If full functionality is required, install `nsepython`
+    in the project's environment and restart the app.
+    """
+    print("⚠️ nsepython not available at import time: nse_get_advances_declines stub called")
+    return None
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="SV's Portfolio", layout="wide")
@@ -31,6 +43,44 @@ def format_indian_number(number):
         result = remaining + result
     
     return result + "," + last_three
+
+# --- HELPER FUNCTION: GET SGB PRICE FROM NSE ---
+@st.cache_data(ttl=3600)
+def get_sgb_price(ticker):
+    """Fetch SGB price from NSE using a lightweight requests call.
+
+    This avoids importing `nsepython` (which pulls heavy binary
+    dependencies). We call the NSE quote API directly and extract
+    the last/close price if present.
+    """
+    try:
+        url = f"https://www.nseindia.com/api/quote-equity?symbol={ticker}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+        }
+
+        # NSE sometimes blocks rapid programmatic requests; use a simple
+        # requests session and rely on the cache decorator to limit calls.
+        sess = requests.Session()
+        resp = sess.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+
+        data = resp.json()
+        if data and isinstance(data, dict) and 'priceInfo' in data:
+            price = data['priceInfo'].get('lastPrice') or data['priceInfo'].get('close')
+            if price is not None:
+                try:
+                    price_f = float(price)
+                    print(f"✅ Fetched SGB {ticker} from NSE @ {price_f}")
+                    return price_f
+                except Exception:
+                    return None
+    except Exception as e:
+        print(f"⚠️ Error fetching SGB price for {ticker} from NSE via requests: {e}")
+
+    return None
 
 # --- HELPER FUNCTION: GET HISTORICAL EXCHANGE RATE ---
 @st.cache_data
@@ -64,24 +114,45 @@ def get_exchange_rate(currency, trade_date):
 
 # --- STEP 1: LOAD DATA FROM MULTIPLE FILES ---
 try:
-    # Find all CSV files matching the pattern 'trades*.csv'
+    # Find all CSV files matching the pattern 'trades*.csv' and any file containing 'sgb'
     trade_files = glob.glob('trades*.csv')
+    # Be filename-insensitive for SGB files (e.g., 'SGBs.csv', 'sgbs.csv')
+    sgb_files = [f for f in glob.glob('*.csv') if 'sgb' in os.path.basename(f).lower()]
+
+    all_files = trade_files + sgb_files
     
-    if not trade_files:
-        st.error("❌ No trade files found. Please add files named 'trades*.csv' (e.g., trades.csv, trades2024.csv, etc.)")
+    if not all_files:
+        st.error("❌ No trade files found. Please add files named 'trades*.csv' or 'SGBs.csv'")
         st.stop()
     
     # Display which files are being loaded (in terminal)
-    print(f"📂 Loading {len(trade_files)} file(s): {', '.join(trade_files)}")
+    print(f"📂 Loading {len(all_files)} file(s): {', '.join(all_files)}")
     
     # Read and combine all trade files
     df_list = []
-    for file in trade_files:
+    for file in all_files:
         try:
             temp_df = pd.read_csv(file, encoding='utf-8', on_bad_lines='skip')
+            
+            # Skip empty files
+            if temp_df.empty:
+                print(f"⚠️ Skipping empty file: {file}")
+                continue
+                
             temp_df['Source_File'] = file  # Track which file each trade came from
+            
+            # Mark SGB entries (filename-insensitive)
+            if 'sgb' in os.path.basename(file).lower():
+                temp_df['Is_SGB'] = True
+                print(f"✅ Loaded {file} ({len(temp_df)} SGB trades)")
+            else:
+                temp_df['Is_SGB'] = False
+                print(f"✅ Loaded {file} ({len(temp_df)} trades)")
+            
             df_list.append(temp_df)
-            print(f"✅ Loaded {file} ({len(temp_df)} trades)")
+            
+        except pd.errors.EmptyDataError:
+            print(f"⚠️ Skipping empty file: {file}")
         except Exception as e:
             print(f"⚠️ Error reading {file}: {str(e)}")
     
@@ -92,6 +163,11 @@ try:
     # Combine all dataframes into one
     df = pd.concat(df_list, ignore_index=True)
     print(f"✅ Total trades loaded: {len(df)}")
+    
+    # Check if we have any SGBs
+    if 'Is_SGB' in df.columns:
+        sgb_count = df['Is_SGB'].sum()
+        print(f"📊 SGB trades found: {sgb_count}")
     
     # Normalize the Type column to uppercase (to handle 'Buy'/'BUY', 'Sell'/'SELL')
     df['Type'] = df['Type'].str.upper()
@@ -131,40 +207,68 @@ print(f"📊 Currently holding {len(currently_held_tickers)} out of {len(ticker_
 
 # --- STEP 3: GET LIVE PRICES FOR HELD STOCKS ONLY ---
 if currently_held_tickers:
-    with st.spinner('Fetching live prices and company names from Yahoo Finance...'):
+    with st.spinner('Fetching live prices and company names from Yahoo Finance and NSE...'):
         market_data = {}
         company_names = {}
         for ticker in currently_held_tickers:
-            try:
-                # Use Ticker object for more reliable price fetching
-                stock = yf.Ticker(ticker)
-                # Get info which contains previousClose (last traded price)
-                info = stock.info
-                
-                # Get company name
-                company_name = (info.get('longName') or 
-                              info.get('shortName') or 
-                              ticker)
-                company_names[ticker] = company_name
-                
-                # Try multiple fields to get the most recent price
-                price = (info.get('currentPrice') or 
-                        info.get('regularMarketPrice') or 
-                        info.get('previousClose') or
-                        info.get('regularMarketPreviousClose'))
-                
-                if price is None:
-                    # Fallback: get historical data
-                    hist = stock.history(period="1mo")
-                    if not hist.empty:
-                        price = hist['Close'].iloc[-1]
-                
-                market_data[ticker] = price
-                print(f"✅ Fetched {ticker}: {company_name} @ {price}")
-            except Exception as e:
-                print(f"⚠️ Could not fetch price for {ticker}: {str(e)}")
-                market_data[ticker] = None
-                company_names[ticker] = ticker
+            # Check if this is an SGB
+            is_sgb = df[df['Ticker'] == ticker]['Is_SGB'].iloc[0] if 'Is_SGB' in df.columns else False
+            
+            if is_sgb:
+                # Fetch SGB price from NSE
+                try:
+                    price = get_sgb_price(ticker)
+                    if price:
+                        market_data[ticker] = price
+                        company_names[ticker] = f"{ticker} (Sovereign Gold Bond)"
+                        print(f"✅ Fetched SGB {ticker} @ {price}")
+                    else:
+                            # Fallback: try to use the most recent trade price as an approximation
+                            try:
+                                recent_price = df[df['Ticker'] == ticker]['Price'].dropna().iloc[-1]
+                                market_data[ticker] = float(recent_price)
+                                company_names[ticker] = f"{ticker} (SGB - fallback to last trade price)"
+                                print(f"⚠️ Could not fetch live SGB price for {ticker}; using last trade price {recent_price} as fallback")
+                            except Exception:
+                                market_data[ticker] = None
+                                company_names[ticker] = f"{ticker} (SGB - Price Not Available)"
+                                print(f"⚠️ Could not fetch price for SGB {ticker}")
+                except Exception as e:
+                    print(f"⚠️ Error fetching SGB {ticker}: {str(e)}")
+                    market_data[ticker] = None
+                    company_names[ticker] = f"{ticker} (SGB - Error)"
+            else:
+                # Fetch regular stock price from Yahoo Finance
+                try:
+                    # Use Ticker object for more reliable price fetching
+                    stock = yf.Ticker(ticker)
+                    # Get info which contains previousClose (last traded price)
+                    info = stock.info
+                    
+                    # Get company name
+                    company_name = (info.get('longName') or 
+                                  info.get('shortName') or 
+                                  ticker)
+                    company_names[ticker] = company_name
+                    
+                    # Try multiple fields to get the most recent price
+                    price = (info.get('currentPrice') or 
+                            info.get('regularMarketPrice') or 
+                            info.get('previousClose') or
+                            info.get('regularMarketPreviousClose'))
+                    
+                    if price is None:
+                        # Fallback: get historical data
+                        hist = stock.history(period="1mo")
+                        if not hist.empty:
+                            price = hist['Close'].iloc[-1]
+                    
+                    market_data[ticker] = price
+                    print(f"✅ Fetched {ticker}: {company_name} @ {price}")
+                except Exception as e:
+                    print(f"⚠️ Could not fetch price for {ticker}: {str(e)}")
+                    market_data[ticker] = None
+                    company_names[ticker] = ticker
     
     # --- STEP 4: CALCULATE HOLDINGS AND REALIZED PROFIT ---
     portfolio_rows = []
@@ -242,21 +346,28 @@ if currently_held_tickers:
             # Current Value (Qty * Current Market Price)
             current_amt = float(current_qty) * float(current_price) * float(fx_rate)
             
+            # Calculate P/L
+            pl_amt = current_amt - invested_amt
+            
+            # Calculate P/L percentage
+            pl_percentage = ((current_amt - invested_amt) / invested_amt) * 100 if invested_amt > 0 else 0
+            
             # Add to totals
             total_invested_inr += invested_amt
             current_value_inr += current_amt
 
-            # Add to our list for the table
+            # Add to our list for the table (with 2 decimal point rounding)
             portfolio_rows.append({
                 "Ticker": ticker,
                 "Name": company_names.get(ticker, ticker),
-                "Qty": current_qty,
+                "Qty": round(current_qty, 2),
                 "Avg Buy Price": round(avg_buy_price, 2),
                 "Current Price": round(current_price, 2),
                 "Currency": currency,
-                "Invested (INR)": format_indian_number(invested_amt),
-                "Current Value (INR)": format_indian_number(current_amt),
-                "P&L (INR)": format_indian_number(current_amt - invested_amt)
+                "Invested Value (INR)": round(invested_amt, 2),
+                "Current Value (INR)": round(current_amt, 2),
+                "P&L (INR)": round(pl_amt, 2),
+                "P/L %": round(pl_percentage, 2)
             })
             print(f"  ✅ Added {ticker} to portfolio display")
     
@@ -290,50 +401,97 @@ if currently_held_tickers:
 
     st.markdown("---")
     
-    # Detailed Dataframe
-    st.subheader("Holdings Breakdown")
-    st.dataframe(pd.DataFrame(portfolio_rows), height=900, hide_index=True)  # 30 rows * 35px per row
+    # Create tabs for Portfolio and Trade Book
+    tab1, tab2 = st.tabs(["📈 Portfolio Overview", "📖 Trade Book"])
     
-    st.markdown("---")
+    # --- TAB 1: PORTFOLIO OVERVIEW ---
+    with tab1:
+        st.subheader("Holdings Breakdown")
+        
+        # Create DataFrame from portfolio rows
+        portfolio_df = pd.DataFrame(portfolio_rows)
+        
+        # Define a function to highlight rows where P/L% is between 5% and 10%
+        def highlight_pl_range(row):
+            # Extract the P/L% value (it's already a float)
+            pl_value = row["P/L %"]
+            
+            # Check if P/L% is between 5 and 10
+            if 5 <= pl_value <= 10:
+                return ['background-color: #006400; color: white'] * len(row)  # Dark green with white text
+            else:
+                return [''] * len(row)
+        
+        # Apply styling and format numeric columns to 2 decimal places
+        styled_df = portfolio_df.style.apply(highlight_pl_range, axis=1).format({
+            "Qty": "{:.2f}",
+            "Avg Buy Price": "{:.2f}",
+            "Current Price": "{:.2f}",
+            "Invested Value (INR)": "{:.2f}",
+            "Current Value (INR)": "{:.2f}",
+            "P&L (INR)": "{:.2f}",
+            "P/L %": "{:.2f}"
+        })
+        st.dataframe(styled_df, height=900, hide_index=True)
     
-    # --- TRADEBOOK SECTION WITH PAGINATION ---
-    st.subheader("📖 Trade Book")
-    
-    # Sort trades by date (most recent first)
-    df_sorted = df.sort_values('Date', ascending=False)
-    
-    # Pagination settings
-    rows_per_page = 100
-    total_trades = len(df_sorted)
-    total_pages = (total_trades - 1) // rows_per_page + 1
-    
-    # Page selector
-    if 'page_number' not in st.session_state:
-        st.session_state.page_number = 1
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    
-    with col1:
-        if st.button("⬅️ Previous") and st.session_state.page_number > 1:
-            st.session_state.page_number -= 1
-    
-    with col2:
-        st.markdown(f"<h4 style='text-align: center;'>Page {st.session_state.page_number} of {total_pages}</h4>", unsafe_allow_html=True)
-    
-    with col3:
-        if st.button("Next ➡️") and st.session_state.page_number < total_pages:
-            st.session_state.page_number += 1
-    
-    # Calculate start and end indices for current page
-    start_idx = (st.session_state.page_number - 1) * rows_per_page
-    end_idx = min(start_idx + rows_per_page, total_trades)
-    
-    # Display paginated trades
-    page_data = df_sorted.iloc[start_idx:end_idx].copy()
-    page_data['Date'] = page_data['Date'].dt.strftime('%Y-%m-%d')
-    st.dataframe(page_data, use_container_width=True, height=3540, hide_index=True)
-    
-    st.caption(f"Showing trades {start_idx + 1} to {end_idx} of {total_trades} total trades")
+    # --- TAB 2: TRADEBOOK ---
+    with tab2:
+        st.subheader("📖 Trade Book")
+        
+        # Sort trades by date (most recent first)
+        df_sorted = df.sort_values('Date', ascending=False)
+        
+        # Pagination settings
+        rows_per_page = 100
+        total_trades = len(df_sorted)
+        total_pages = (total_trades - 1) // rows_per_page + 1
+        
+        # Page selector
+        if 'page_number' not in st.session_state:
+            st.session_state.page_number = 1
+        
+        col1, col2, col3, col4 = st.columns([1, 2, 1, 1])
+        
+        with col1:
+            if st.button("⬅️ Previous") and st.session_state.page_number > 1:
+                st.session_state.page_number -= 1
+        
+        with col2:
+            st.markdown(f"<h4 style='text-align: center;'>Page {st.session_state.page_number} of {total_pages}</h4>", unsafe_allow_html=True)
+        
+        with col3:
+            if st.button("Next ➡️") and st.session_state.page_number < total_pages:
+                st.session_state.page_number += 1
+        
+        with col4:
+            # Direct page jump
+            jump_to_page = st.number_input(
+                "Jump to page:",
+                min_value=1,
+                max_value=total_pages,
+                value=st.session_state.page_number,
+                step=1,
+                key="page_jump"
+            )
+            if jump_to_page != st.session_state.page_number:
+                st.session_state.page_number = jump_to_page
+                st.rerun()
+        
+        # Calculate start and end indices for current page
+        start_idx = (st.session_state.page_number - 1) * rows_per_page
+        end_idx = min(start_idx + rows_per_page, total_trades)
+        
+        # Display paginated trades
+        page_data = df_sorted.iloc[start_idx:end_idx].copy()
+        page_data['Date'] = page_data['Date'].dt.strftime('%Y-%m-%d')
+        
+        # Remove internal columns that shouldn't be displayed
+        columns_to_drop = ['Is_SGB', 'Source_File', 'Country', 'Exchange_Rate']
+        page_data = page_data.drop(columns=[col for col in columns_to_drop if col in page_data.columns])
+        
+        st.dataframe(page_data, use_container_width=True, height=3540, hide_index=True)
+        
+        st.caption(f"Showing trades {start_idx + 1} to {end_idx} of {total_trades} total trades")
 
 else:
     st.warning("No tickers found in CSV.")
