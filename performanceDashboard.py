@@ -3,9 +3,11 @@ import pandas as pd
 import yfinance as yf
 from pyxirr import xirr
 from datetime import date
+import glob
+import os
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Test SV's Portfolio", layout="wide")
+st.set_page_config(page_title="SV's Portfolio", layout="wide")
 st.title("📊 SV's Stock Portfolio")
 
 # --- HELPER FUNCTION: GET HISTORICAL EXCHANGE RATE ---
@@ -38,10 +40,35 @@ def get_exchange_rate(currency, trade_date):
     # Default fallback rate
     return 83.0
 
-# --- STEP 1: LOAD DATA ---
+# --- STEP 1: LOAD DATA FROM MULTIPLE FILES ---
 try:
-    # Read the CSV file into a Pandas DataFrame (table)
-    df = pd.read_csv('trades.csv', encoding='utf-8', on_bad_lines='skip')
+    # Find all CSV files matching the pattern 'trades*.csv'
+    trade_files = glob.glob('trades*.csv')
+    
+    if not trade_files:
+        st.error("❌ No trade files found. Please add files named 'trades*.csv' (e.g., trades.csv, trades2024.csv, etc.)")
+        st.stop()
+    
+    # Display which files are being loaded
+    st.info(f"📂 Loading {len(trade_files)} file(s): {', '.join(trade_files)}")
+    
+    # Read and combine all trade files
+    df_list = []
+    for file in trade_files:
+        try:
+            temp_df = pd.read_csv(file, encoding='utf-8', on_bad_lines='skip')
+            temp_df['Source_File'] = file  # Track which file each trade came from
+            df_list.append(temp_df)
+            st.success(f"✅ Loaded {file} ({len(temp_df)} trades)")
+        except Exception as e:
+            st.warning(f"⚠️ Error reading {file}: {str(e)}")
+    
+    if not df_list:
+        st.error("❌ Could not load any trade files successfully.")
+        st.stop()
+    
+    # Combine all dataframes into one
+    df = pd.concat(df_list, ignore_index=True)
     
     # Convert 'Date' column to actual datetime objects so Python understands them
     df['Date'] = pd.to_datetime(df['Date'])
@@ -53,60 +80,55 @@ try:
             axis=1
         )
     
-    st.success("✅ Data loaded successfully!")
-except FileNotFoundError:
-    st.error("❌ Could not find trades.csv. Please check Step 2.")
-    st.stop()
+    st.success(f"✅ Total trades loaded: {len(df)}")
 except Exception as e:
-    st.error(f"❌ Error reading CSV file: {str(e)}")
+    st.error(f"❌ Error reading CSV files: {str(e)}")
     st.stop()
 
-# --- STEP 2: GET PRICES FROM CSV (NO YAHOO FETCH FOR TRADEBOOK) ---
-# Get list of unique tickers from the CSV
+# --- STEP 2: GET LIVE PRICES ---
+# Get list of unique tickers to fetch from Yahoo Finance
 ticker_list = df['Ticker'].unique().tolist()
 
-# Build market_data and daily_change_data using the CSV `Price` column
-market_data = {}
-daily_change_data = {}
-
 if ticker_list:
-    with st.spinner('Using prices from CSV for tradebook...'):
+    with st.spinner('Fetching live prices and company names from Yahoo Finance...'):
+        market_data = {}
+        company_names = {}
         for ticker in ticker_list:
-            ticker_rows = df[df['Ticker'] == ticker].sort_values('Date')
-            if ticker_rows.empty:
-                market_data[ticker] = None
-                daily_change_data[ticker] = 0
-                continue
-
-            # Use the most recent trade price from CSV as the current price
             try:
-                last_price = float(ticker_rows['Price'].iloc[-1])
-            except Exception:
-                last_price = None
-
-            market_data[ticker] = last_price
-
-            # Compute daily change as percent change between last two trade prices if available
-            if len(ticker_rows) >= 2:
-                try:
-                    prev_price = float(ticker_rows['Price'].iloc[-2])
-                    if prev_price != 0 and last_price is not None:
-                        daily_change_pct = ((last_price - prev_price) / prev_price) * 100
-                    else:
-                        daily_change_pct = 0
-                except Exception:
-                    daily_change_pct = 0
-            else:
-                daily_change_pct = 0
-
-            daily_change_data[ticker] = daily_change_pct
+                # Use Ticker object for more reliable price fetching
+                stock = yf.Ticker(ticker)
+                # Get info which contains previousClose (last traded price)
+                info = stock.info
+                
+                # Get company name
+                company_name = (info.get('longName') or 
+                              info.get('shortName') or 
+                              ticker)
+                company_names[ticker] = company_name
+                
+                # Try multiple fields to get the most recent price
+                price = (info.get('currentPrice') or 
+                        info.get('regularMarketPrice') or 
+                        info.get('previousClose') or
+                        info.get('regularMarketPreviousClose'))
+                
+                if price is None:
+                    # Fallback: get historical data
+                    hist = stock.history(period="1mo")
+                    if not hist.empty:
+                        price = hist['Close'].iloc[-1]
+                
+                market_data[ticker] = price
+            except Exception as e:
+                st.warning(f"⚠️ Could not fetch price for {ticker}: {str(e)}")
+                market_data[ticker] = None
+                company_names[ticker] = ticker
     
     # --- STEP 3: CALCULATE HOLDINGS AND REALIZED PROFIT ---
     portfolio_rows = []
     total_invested_inr = 0.0
     current_value_inr = 0.0
     total_realized_profit = 0.0
-    total_daily_change_inr = 0.0
     
     # Prepare cash flows for XIRR calculation
     cash_flows = []
@@ -152,25 +174,16 @@ if ticker_list:
         
         # Only process if we actually hold the stock
         if current_qty > 0:
-            # Get latest price from CSV market_data (may be None)
-            current_price = market_data.get(ticker)
-
-            # If price present, coerce to float; if not, keep as None (show empty in table)
-            if current_price is not None:
-                try:
-                    current_price = float(current_price)
-                except Exception:
-                    st.warning(f"⚠️ Invalid current price for {ticker}: {current_price!r}. Showing empty price.")
-                    current_price = None
-
+            # Get latest price from our Yahoo download
+            if ticker in market_data and market_data[ticker] is not None:
+                current_price = market_data[ticker]
+            else:
+                st.warning(f"⚠️ Could not fetch price for {ticker}, skipping...")
+                continue
+            
             # Get the exchange rate (taking the first one found for this ticker)
             fx_rate = ticker_trades['Exchange_Rate'].iloc[0]
             currency = ticker_trades['Currency'].iloc[0]
-            try:
-                fx_rate = float(fx_rate)
-            except Exception:
-                st.warning(f"⚠️ Invalid FX rate for {ticker}: {fx_rate!r}. Using 1.0")
-                fx_rate = 1.0
 
             # Calculate Average Buy Price
             # Formula: (Sum of all Buy Prices * Qty) / Total Qty Bought
@@ -179,19 +192,10 @@ if ticker_list:
 
             # Invested Amount (Qty * Avg Cost)
             invested_amt = float(current_qty) * float(avg_buy_price) * float(fx_rate)
-
-            # Current Value (Qty * Current Market Price) — if price missing, treat current_amt as 0
-            if current_price is not None:
-                current_amt = float(current_qty) * float(current_price) * float(fx_rate)
-            else:
-                current_amt = 0.0
-
-            # Calculate daily change in INR
-            if ticker in daily_change_data and current_price is not None:
-                daily_change_pct = daily_change_data[ticker]
-                daily_change_amt = (current_amt * daily_change_pct) / 100
-                total_daily_change_inr += daily_change_amt
-
+            
+            # Current Value (Qty * Current Market Price)
+            current_amt = float(current_qty) * float(current_price) * float(fx_rate)
+            
             # Add to totals
             total_invested_inr += invested_amt
             current_value_inr += current_amt
@@ -199,10 +203,10 @@ if ticker_list:
             # Add to our list for the table
             portfolio_rows.append({
                 "Ticker": ticker,
+                "Name": company_names.get(ticker, ticker),
                 "Qty": current_qty,
                 "Avg Buy Price": round(avg_buy_price, 2),
-                "Current Price": (round(current_price, 2) if current_price is not None else None),
-                "Daily Change %": round(daily_change_data.get(ticker, 0), 2),
+                "Current Price": round(current_price, 2),
                 "Currency": currency,
                 "Invested (INR)": round(invested_amt, 2),
                 "Current Value (INR)": round(current_amt, 2),
@@ -223,7 +227,7 @@ if ticker_list:
 
     # --- STEP 4: VISUALIZE ---
     # Top level metrics
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Total Invested", f"₹{total_invested_inr:,.0f}")
     col2.metric("Current Value", f"₹{current_value_inr:,.0f}")
     
@@ -231,53 +235,17 @@ if ticker_list:
     total_unrealized_pl = current_value_inr - total_invested_inr
     col3.metric("Unrealized P&L", f"₹{total_unrealized_pl:,.0f}", delta=f"{total_unrealized_pl:,.0f}")
     
-    # Calculate and show daily change percentage
-    daily_change_pct = (total_daily_change_inr / (current_value_inr - total_daily_change_inr) * 100) if (current_value_inr - total_daily_change_inr) != 0 else 0
-    col4.metric("Daily Change", f"{daily_change_pct:.2f}%", delta=f"₹{total_daily_change_inr:,.0f}")
-    
     # Show realized profit from sells
-    col5.metric("Realized Profit", f"₹{total_realized_profit:,.0f}", delta=f"{total_realized_profit:,.0f}")
+    col4.metric("Realized Profit", f"₹{total_realized_profit:,.0f}", delta=f"{total_realized_profit:,.0f}")
     
     # Show XIRR
-    col6.metric("XIRR", f"{xirr_percentage:.2f}%")
+    col5.metric("XIRR", f"{xirr_percentage:.2f}%")
 
     st.markdown("---")
     
     # Detailed Dataframe
     st.subheader("Holdings Breakdown")
-    
-    # Create DataFrame from portfolio rows
-    holdings_df = pd.DataFrame(portfolio_rows)
-    
-    if not holdings_df.empty:
-        # Display the dataframe with interactive features - click column headers to sort
-        st.dataframe(
-            holdings_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Ticker": st.column_config.TextColumn("Ticker", help="Stock ticker symbol"),
-                "Qty": st.column_config.NumberColumn("Qty", help="Quantity held"),
-                "Avg Buy Price": st.column_config.NumberColumn("Avg Buy Price", format="%.2f"),
-                "Current Price": st.column_config.NumberColumn("Current Price", format="%.2f"),
-                "Daily Change %": st.column_config.NumberColumn(
-                    "Daily Change %",
-                    format="%.2f%%",
-                    help="Daily price change percentage"
-                ),
-                "Currency": st.column_config.TextColumn("Currency"),
-                "Invested (INR)": st.column_config.NumberColumn("Invested (INR)", format="₹%.2f"),
-                "Current Value (INR)": st.column_config.NumberColumn("Current Value (INR)", format="₹%.2f"),
-                "P&L (INR)": st.column_config.NumberColumn(
-                    "P&L (INR)",
-                    format="₹%.2f",
-                    help="Profit/Loss in INR"
-                ),
-            }
-        )
-        st.caption("💡 Tip: Click on any column header to sort the table")
-    else:
-        st.info("No holdings to display")
+    st.dataframe(pd.DataFrame(portfolio_rows))
     
     st.markdown("---")
     
