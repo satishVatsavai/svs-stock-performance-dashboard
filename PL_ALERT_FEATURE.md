@@ -102,7 +102,6 @@ Each alert includes:
 - Stock ticker and full company name
 - Current quantity held
 - Average buy price
-- Current market price
 - Total invested amount
 - Current value
 - Absolute P&L in rupees

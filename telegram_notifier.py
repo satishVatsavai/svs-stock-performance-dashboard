@@ -102,7 +102,6 @@ def send_pl_alert():
             message += f"*{stock['Ticker']}* - {stock['Name']}\n"
             message += f"  • Qty: {stock['Qty']}\n"
             message += f"  • Avg Buy: {stock['Currency']} {stock['Avg Buy Price']:.2f}\n"
-            message += f"  • Current: {stock['Currency']} {stock['Current Price']:.2f}\n"
             message += f"  • Invested: ₹{stock['Invested Value (INR)']:,.0f}\n"
             message += f"  • Current: ₹{stock['Current Value (INR)']:,.0f}\n"
             message += f"  • P&L: ₹{stock['P&L (INR)']:,.0f} ({stock['P/L %']:.2f}%)\n"
