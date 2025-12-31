@@ -47,6 +47,9 @@ SGB_PRICE_CACHE_FILE = 'sgb_price_cache.json'
 CACHE_VALIDITY_HOURS = 6
 FALLBACK_USD_INR_RATE = float(os.getenv('FALLBACK_USD_INR_RATE', '90.0'))
 
+# Global cache for exchange rates during current session
+_exchange_rate_session_cache = {}
+
 
 # ============================================================================
 # TRADEBOOK MANAGEMENT
@@ -120,33 +123,99 @@ def get_exchange_rate(currency, trade_date):
     """
     Get exchange rate for a given currency and date.
     Returns 1.0 for INR, fetches rate for USD and other currencies.
+    
+    Data sources (in order of preference):
+    1. Yahoo Finance
+    2. exchangerate-api.com (current rate as fallback)
+    3. Environment variable FALLBACK_USD_INR_RATE (last resort)
     """
     if currency == 'INR':
         return 1.0
     
     if currency == 'USD':
-        try:
-            # Try to fetch historical exchange rate for the trade date
-            ticker = 'USDINR=X'
-            data = yf.download(ticker, start=trade_date, end=trade_date, progress=False)
-            
-            if not data.empty and 'Close' in data.columns:
-                rate = data['Close'].iloc[0]
-                return float(rate)
-            
-            # If no data for exact date, try a few days before
-            for days_back in [1, 2, 3, 7]:
-                past_date = (pd.to_datetime(trade_date) - pd.Timedelta(days=days_back)).strftime('%Y-%m-%d')
-                data = yf.download(ticker, start=past_date, end=past_date, progress=False)
-                if not data.empty and 'Close' in data.columns:
-                    rate = data['Close'].iloc[0]
-                    return float(rate)
-            
-        except Exception as e:
-            print(f"⚠️ Could not fetch exchange rate for {currency} on {trade_date}: {e}")
+        import sys
+        from io import StringIO
         
-        # Fallback to environment variable
-        return FALLBACK_USD_INR_RATE
+        # Check session cache first
+        cache_key = f"{currency}_{trade_date}"
+        if cache_key in _exchange_rate_session_cache:
+            return _exchange_rate_session_cache[cache_key]
+        
+        # Check if we already have a fallback rate cached for this currency
+        fallback_key = f"{currency}_fallback"
+        if fallback_key in _exchange_rate_session_cache:
+            rate = _exchange_rate_session_cache[fallback_key]
+            _exchange_rate_session_cache[cache_key] = rate
+            return rate
+        
+        # Try Yahoo Finance first with multiple ticker formats (suppress output)
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = StringIO()
+        sys.stderr = StringIO()
+        
+        try:
+            # Convert trade_date to datetime if it's a string
+            if isinstance(trade_date, str):
+                date_obj = pd.to_datetime(trade_date)
+            else:
+                date_obj = trade_date
+            
+            date_str = date_obj.strftime('%Y-%m-%d')
+            
+            for ticker in ['INR=X', 'USDINR=X']:
+                try:
+                    data = yf.download(ticker, start=date_str, end=date_str, progress=False)
+                    
+                    if not data.empty and 'Close' in data.columns:
+                        rate = float(data['Close'].iloc[0])
+                        sys.stdout = old_stdout
+                        sys.stderr = old_stderr
+                        _exchange_rate_session_cache[cache_key] = rate
+                        return rate
+                except Exception:
+                    continue
+            
+            # If exact date fails, try a few days before
+            for ticker in ['INR=X', 'USDINR=X']:
+                for days_back in [1, 2, 3, 7]:
+                    try:
+                        past_date = (date_obj - pd.Timedelta(days=days_back)).strftime('%Y-%m-%d')
+                        data = yf.download(ticker, start=past_date, end=past_date, progress=False)
+                        if not data.empty and 'Close' in data.columns:
+                            rate = float(data['Close'].iloc[0])
+                            sys.stdout = old_stdout
+                            sys.stderr = old_stderr
+                            _exchange_rate_session_cache[cache_key] = rate
+                            return rate
+                    except Exception:
+                        continue
+        finally:
+            # Always restore stdout/stderr
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+        
+        # Try exchangerate-api.com (current rate - free API)
+        try:
+            url = "https://api.exchangerate-api.com/v4/latest/USD"
+            response = requests.get(url, timeout=5)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'rates' in data and 'INR' in data['rates']:
+                    rate = float(data['rates']['INR'])
+                    # Cache this as fallback rate for all dates
+                    _exchange_rate_session_cache[fallback_key] = rate
+                    _exchange_rate_session_cache[cache_key] = rate
+                    return rate
+        except Exception:
+            pass  # Continue to last resort
+        
+        # Last resort: use fallback rate from environment
+        rate = FALLBACK_USD_INR_RATE
+        _exchange_rate_session_cache[fallback_key] = rate
+        _exchange_rate_session_cache[cache_key] = rate
+        return rate
     
     # For other currencies, return 1.0 (or implement additional logic)
     return 1.0
@@ -173,6 +242,9 @@ def add_exchange_rates_to_trades(df):
     
     # Build a cache of rates
     rate_cache = {}
+    # Also cache API fallback rates per currency to avoid repeated API calls
+    currency_fallback_cache = {}
+    
     for _, row in needs_rate.iterrows():
         currency = row['Currency']
         trade_date = row['Date']
@@ -181,6 +253,10 @@ def add_exchange_rates_to_trades(df):
         if cache_key not in rate_cache:
             rate = get_exchange_rate(currency, trade_date)
             rate_cache[cache_key] = rate
+            
+            # If we got a fallback rate, cache it for this currency
+            if currency not in currency_fallback_cache:
+                currency_fallback_cache[currency] = rate
     
     # Apply rates to all trades
     for idx in df[missing_rate_mask].index:

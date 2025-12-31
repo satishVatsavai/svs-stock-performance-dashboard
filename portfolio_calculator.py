@@ -78,13 +78,22 @@ def get_sgb_price(ticker):
 
 
 def get_exchange_rate(currency, trade_date):
-    """Get historical exchange rate for a given currency and date"""
+    """
+    Get historical exchange rate for a given currency and date.
+    
+    Data sources (in order of preference):
+    1. Yahoo Finance
+    2. exchangerate-api.com (current rate as fallback)
+    3. Environment variable FALLBACK_USD_INR_RATE (last resort)
+    """
     if currency == 'INR':
         return 1.0
     
     import sys
     from io import StringIO
+    import requests
     
+    # Try Yahoo Finance first
     try:
         start_date = trade_date - pd.Timedelta(days=7)
         end_date = trade_date + pd.Timedelta(days=1)
@@ -96,30 +105,53 @@ def get_exchange_rate(currency, trade_date):
         sys.stderr = StringIO()
         
         try:
-            fx_data = yf.download('USDINR=X', start=start_date, end=end_date, progress=False, auto_adjust=True)
+            # Try multiple ticker formats
+            for ticker in ['INR=X', 'USDINR=X']:
+                try:
+                    fx_data = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
+                    
+                    if not fx_data.empty:
+                        rate = float(fx_data['Close'].iloc[-1].iloc[0]) if hasattr(fx_data['Close'].iloc[-1], 'iloc') else float(fx_data['Close'].iloc[-1])
+                        sys.stdout = old_stdout
+                        sys.stderr = old_stderr
+                        print(f"✅ Exchange rate fetched from yFinance: 1 USD = {rate} INR")
+                        return round(rate, 2)
+                except Exception:
+                    continue
             
-            if not fx_data.empty:
-                rate = float(fx_data['Close'].iloc[-1].iloc[0]) if hasattr(fx_data['Close'].iloc[-1], 'iloc') else float(fx_data['Close'].iloc[-1])
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
-                print(f"✅ Exchange rate fetched from yFinance: 1 USD = {rate} INR")
-                return round(rate, 2)
-            else:
-                fx_data = yf.Ticker('USDINR=X').history(period='5d')
-                if not fx_data.empty:
-                    rate = float(fx_data['Close'].iloc[-1])
-                    sys.stdout = old_stdout
-                    sys.stderr = old_stderr
-                    print(f"✅ Exchange rate fetched from yFinance: 1 USD = {rate} INR")
-                    return round(rate, 2)
+            # Try history method as last Yahoo attempt
+            for ticker in ['INR=X', 'USDINR=X']:
+                try:
+                    fx_data = yf.Ticker(ticker).history(period='5d')
+                    if not fx_data.empty:
+                        rate = float(fx_data['Close'].iloc[-1])
+                        sys.stdout = old_stdout
+                        sys.stderr = old_stderr
+                        print(f"✅ Exchange rate fetched from yFinance: 1 USD = {rate} INR")
+                        return round(rate, 2)
+                except Exception:
+                    continue
         finally:
             # Always restore stdout/stderr
             sys.stdout = old_stdout
             sys.stderr = old_stderr
             
-    except Exception as e:
-        # Silently handle yfinance errors and use fallback rate
-        pass
+    except Exception:
+        pass  # Continue to fallback
+    
+    # Try exchangerate-api.com (current rate - free API)
+    try:
+        url = "https://api.exchangerate-api.com/v4/latest/USD"
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if 'rates' in data and 'INR' in data['rates']:
+                rate = float(data['rates']['INR'])
+                print(f"⚠️ Using current exchange rate from exchangerate-api.com: 1 USD = {rate} INR")
+                return round(rate, 2)
+    except Exception:
+        pass  # Continue to last resort
     
     # Fallback to configured rate from .env file (default: 83.0)
     fallback_rate = float(os.getenv('FALLBACK_USD_INR_RATE', '83.0'))
