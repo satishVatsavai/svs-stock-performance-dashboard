@@ -5,6 +5,7 @@ This guide will help you set up automated Telegram notifications for your portfo
 ## Features
 - 📱 Sends portfolio summary to Telegram 3 times a day
 - 📊 Includes all key metrics: invested amount, current value, P&L, XIRR, daily changes
+- 🔔 **NEW:** Daily P/L alerts for stocks with 5%-10% profit at 3:00 PM
 - ⏰ Customizable notification times
 - 🔄 Runs continuously in the background
 
@@ -47,6 +48,9 @@ Alternatively:
    NOTIFICATION_TIME_1=07:00
    NOTIFICATION_TIME_2=15:00
    NOTIFICATION_TIME_3=23:00
+   
+   # P/L Alert time for stocks between 5% and 10% profit
+   PL_ALERT_TIME=15:00
    ```
 
 ### Step 4: Install Dependencies

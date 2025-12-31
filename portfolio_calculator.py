@@ -21,6 +21,7 @@ import glob
 import os
 import requests
 from dotenv import load_dotenv
+from tradebook_builder import load_or_create_tradebook
 
 # Load environment variables
 load_dotenv()
@@ -127,45 +128,23 @@ def get_exchange_rate(currency, trade_date):
 
 
 def load_trade_data():
-    """Load and combine all trade data from CSV files"""
-    trade_files = glob.glob('trades*.csv')
-    sgb_files = [f for f in glob.glob('*.csv') if 'sgb' in os.path.basename(f).lower()]
-    all_files = trade_files + sgb_files
+    """Load and combine all trade data from tradebook.csv (with automatic updates from new files)"""
+    # Use the tradebook manager to load trades efficiently
+    # Exchange rates are already calculated and stored in the tradebook
+    df = load_or_create_tradebook()
     
-    if not all_files:
-        raise FileNotFoundError("No trade files found")
-    
-    df_list = []
-    for file in all_files:
-        try:
-            temp_df = pd.read_csv(file, encoding='utf-8', on_bad_lines='skip')
-            
-            if temp_df.empty:
-                continue
-                
-            temp_df['Source_File'] = file
-            
-            if 'sgb' in os.path.basename(file).lower():
-                temp_df['Is_SGB'] = True
-            else:
-                temp_df['Is_SGB'] = False
-            
-            df_list.append(temp_df)
-            
-        except Exception as e:
-            print(f"⚠️ Error reading {file}: {str(e)}")
-    
-    if not df_list:
-        raise ValueError("Could not load any trade files successfully")
-    
-    df = pd.concat(df_list, ignore_index=True)
+    # Apply standard transformations
     df['Type'] = df['Type'].str.upper()
     df['Date'] = pd.to_datetime(df['Date'])
     
-    df['Exchange_Rate'] = df.apply(
-        lambda row: get_exchange_rate(row['Currency'], row['Date']),
-        axis=1
-    )
+    # Exchange_Rate is already in the tradebook, no need to recalculate!
+    # If for some reason it's missing, fill with default
+    if 'Exchange_Rate' not in df.columns:
+        print("⚠️ Exchange_Rate column missing, adding defaults...")
+        df['Exchange_Rate'] = df.apply(
+            lambda row: get_exchange_rate(row['Currency'], row['Date']),
+            axis=1
+        )
     
     return df
 
