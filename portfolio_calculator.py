@@ -2,18 +2,28 @@
 Portfolio Summary Calculator Module
 Extracts portfolio calculation logic for reuse in dashboard and Telegram notifications
 """
-
+import yfinance as yf
 import warnings
+import logging
 # Suppress urllib3 SSL warning for macOS with LibreSSL
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
+# Suppress yfinance warnings
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+
+# Suppress yfinance logger messages
+logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
 import pandas as pd
-import yfinance as yf
 from pyxirr import xirr
 from datetime import date
 import glob
 import os
 import requests
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 
 def format_indian_number(number):
@@ -71,24 +81,49 @@ def get_exchange_rate(currency, trade_date):
     if currency == 'INR':
         return 1.0
     
+    import sys
+    from io import StringIO
+    
     try:
         start_date = trade_date - pd.Timedelta(days=7)
         end_date = trade_date + pd.Timedelta(days=1)
         
-        fx_data = yf.download('USDINR=X', start=start_date, end=end_date, progress=False, auto_adjust=True)
+        # Suppress all output from yfinance
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        sys.stdout = StringIO()
+        sys.stderr = StringIO()
         
-        if not fx_data.empty:
-            rate = float(fx_data['Close'].iloc[-1].iloc[0]) if hasattr(fx_data['Close'].iloc[-1], 'iloc') else float(fx_data['Close'].iloc[-1])
-            return round(rate, 2)
-        else:
-            fx_data = yf.Ticker('USDINR=X').history(period='5d')
+        try:
+            fx_data = yf.download('USDINR=X', start=start_date, end=end_date, progress=False, auto_adjust=True)
+            
             if not fx_data.empty:
-                rate = float(fx_data['Close'].iloc[-1])
+                rate = float(fx_data['Close'].iloc[-1].iloc[0]) if hasattr(fx_data['Close'].iloc[-1], 'iloc') else float(fx_data['Close'].iloc[-1])
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+                print(f"✅ Exchange rate fetched from yFinance: 1 USD = {rate} INR")
                 return round(rate, 2)
-    except:
+            else:
+                fx_data = yf.Ticker('USDINR=X').history(period='5d')
+                if not fx_data.empty:
+                    rate = float(fx_data['Close'].iloc[-1])
+                    sys.stdout = old_stdout
+                    sys.stderr = old_stderr
+                    print(f"✅ Exchange rate fetched from yFinance: 1 USD = {rate} INR")
+                    return round(rate, 2)
+        finally:
+            # Always restore stdout/stderr
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+            
+    except Exception as e:
+        # Silently handle yfinance errors and use fallback rate
         pass
     
-    return 83.0
+    # Fallback to configured rate from .env file (default: 83.0)
+    fallback_rate = float(os.getenv('FALLBACK_USD_INR_RATE', '83.0'))
+    print(f"⚠️ Using fallback exchange rate from .env: 1 USD = {fallback_rate} INR")
+    return fallback_rate
 
 
 def load_trade_data():
