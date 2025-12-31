@@ -21,7 +21,7 @@ import glob
 import os
 import requests
 from dotenv import load_dotenv
-from tradebook_builder import load_or_create_tradebook
+import time
 
 # Load environment variables
 load_dotenv()
@@ -159,22 +159,34 @@ def get_exchange_rate(currency, trade_date):
 
 
 def load_trade_data():
-    """Load and combine all trade data from tradebook.csv (with automatic updates from new files)"""
-    # Use the tradebook manager to load trades efficiently
-    # Exchange rates are already calculated and stored in the tradebook
-    df = load_or_create_tradebook()
+    """Load tradebook.csv as-is without any processing or updates"""
+    # Simply load the tradebook CSV file directly
+    # User maintains this file manually using tradebook_builder.py
+    
+    tradebook_file = 'tradebook.csv'
+    
+    if not os.path.exists(tradebook_file):
+        raise FileNotFoundError(
+            f"❌ {tradebook_file} not found! "
+            f"Please create it first by running: python3 tradebook_builder.py consolidate"
+        )
+    
+    print(f"📂 Loading {tradebook_file}...")
+    df = pd.read_csv(tradebook_file)
+    print(f"   Loaded {len(df)} trades")
     
     # Apply standard transformations
     df['Type'] = df['Type'].str.upper()
     df['Date'] = pd.to_datetime(df['Date'])
     
-    # Exchange_Rate is already in the tradebook, no need to recalculate!
-    # If for some reason it's missing, fill with default
-    if 'Exchange_Rate' not in df.columns:
-        print("⚠️ Exchange_Rate column missing, adding defaults...")
-        df['Exchange_Rate'] = df.apply(
-            lambda row: get_exchange_rate(row['Currency'], row['Date']),
-            axis=1
+    # Verify required columns exist
+    required_columns = ['Date', 'Ticker', 'Type', 'Qty', 'Price', 'Currency', 'Exchange_Rate']
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    
+    if missing_columns:
+        raise ValueError(
+            f"❌ Missing required columns in {tradebook_file}: {', '.join(missing_columns)}\n"
+            f"   Please rebuild the tradebook: python3 tradebook_builder.py rebuild"
         )
     
     return df
