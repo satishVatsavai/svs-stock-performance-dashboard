@@ -15,15 +15,28 @@ def nse_get_advances_declines(*args, **kwargs):
     print("⚠️ nsepython not available at import time: nse_get_advances_declines stub called")
     return None
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes (300 seconds)
+def load_portfolio_data():
+    """Load and calculate portfolio data with caching to avoid repeated API calls"""
+    return calculate_detailed_portfolio()
+
 # --- PAGE SETUP ---
 st.set_page_config(page_title="SV's Portfolio", layout="wide")
-st.title("📊 SV's Stock Portfolio")
+
+# Add a refresh button in the header
+col_title, col_refresh = st.columns([6, 1])
+with col_title:
+    st.title("📊 SV's Stock Portfolio")
+with col_refresh:
+    if st.button("🔄 Refresh Prices", help="Fetch latest stock prices"):
+        st.cache_data.clear()
+        st.rerun()
 
 # --- STEP 1: LOAD AND CALCULATE PORTFOLIO ---
 try:
     with st.spinner('Loading portfolio data and fetching live prices...'):
-        # Use the shared calculation function from portfolio_calculator
-        portfolio_rows, summary_metrics, df = calculate_detailed_portfolio()
+        # Use the cached function to avoid refetching on every page change
+        portfolio_rows, summary_metrics, df = load_portfolio_data()
     
     if not portfolio_rows or not summary_metrics or df is None:
         st.error("❌ No portfolio data available. Please check your CSV files.")
@@ -70,7 +83,10 @@ try:
             "P&L (INR)": "{:.2f}",
             "P/L %": "{:.2f}"
         })
-        st.dataframe(styled_df, height=900, hide_index=True)
+        
+        # Calculate dynamic height: header (38px) + rows (35px each) + padding (10px)
+        table_height = min(38 + (len(portfolio_df) * 35) + 10, 2000)
+        st.dataframe(styled_df, width="stretch", height=table_height, hide_index=True)
     
     # --- TAB 2: TRADEBOOK ---
     with tab2:

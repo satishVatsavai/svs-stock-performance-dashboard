@@ -91,7 +91,7 @@ def send_pl_alert():
             return
         
         # Format alert message
-        message = "📊 *Daily P/L Alert - 5% to 10% Range*\n"
+        message = "📊 *Attention Needed* \n"
         message += f"🕒 {datetime.now().strftime('%d-%b-%Y %I:%M %p')}\n\n"
         message += f"Found *{len(alert_stocks)}* stock(s) in the profit range:\n\n"
         

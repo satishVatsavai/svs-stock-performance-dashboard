@@ -67,7 +67,6 @@ def get_sgb_price(ticker):
             if price is not None:
                 try:
                     price_f = float(price)
-                    print(f"✅ Fetched SGB {ticker} from NSE @ {price_f}")
                     return price_f
                 except Exception:
                     return None
