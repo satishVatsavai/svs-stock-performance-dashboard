@@ -101,7 +101,6 @@ Stocks are sorted by P/L percentage (highest first), so you see the most profita
 Each alert includes:
 - Stock ticker and full company name
 - Current quantity held
-- Average buy price
 - Total invested amount
 - Current value
 - Absolute P&L in rupees
