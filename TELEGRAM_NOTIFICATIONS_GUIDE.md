@@ -65,7 +65,7 @@ pip install -r requirements.txt
 ### 5. Test Your Setup
 
 ```bash
-python3 test_telegram.py
+python3 archivesPY/test_telegram.py
 ```
 
 You should receive a test message immediately!
@@ -447,7 +447,7 @@ screen -r portfolio_notifier
 - No internet connection
 
 **Solutions:**
-1. Test with `python3 test_telegram.py`
+1. Test with `python3 archivesPY/test_telegram.py`
 2. Verify you started a chat with the bot (send any message first)
 3. Check bot isn't blocked in Telegram
 4. Verify credentials in `.env`
@@ -474,7 +474,7 @@ pip install -r requirements.txt
 **Checks:**
 1. Verify notifier is running: `ps aux | grep telegram_notifier`
 2. Check `.env` has `PL_ALERT_TIME=15:00`
-3. Verify stocks are in 5-10% range: `python3 test_telegram.py`
+3. Verify stocks are in 5-10% range: `python3 archivesPY/test_telegram.py`
 4. Check logs for errors
 
 ### Rate Limit Errors (429)
@@ -515,7 +515,7 @@ pip install -r requirements.txt
 ### Test Configuration
 
 ```bash
-python3 test_telegram.py
+python3 archivesPY/test_telegram.py
 ```
 
 **Expected output:**
@@ -569,7 +569,7 @@ The notifier uses `portfolio_calculator.py` which:
 | Command | Purpose |
 |---------|---------|
 | `./start_notifier.sh` | Start notifier (recommended) |
-| `python3 test_telegram.py` | Test configuration |
+| `python3 archivesPY/test_telegram.py` | Test configuration |
 | `screen -ls` | Check if running (screen) |
 | `ps aux \| grep telegram` | Check if running (general) |
 | `pkill -f telegram_notifier` | Stop notifier |
@@ -582,14 +582,14 @@ The notifier uses `portfolio_calculator.py` which:
 | `.env` | Your credentials (never commit) |
 | `.env.example` | Template for `.env` |
 | `telegram_notifier.py` | Main notification script |
-| `test_telegram.py` | Configuration tester |
+| `archivesPY/test_telegram.py` | Configuration tester |
 | `start_notifier.sh` | Quick start script |
 | `portfolio_calculator.py` | Calculation engine |
 
 ## Support
 
 If you encounter issues:
-1. Run `python3 test_telegram.py` first
+1. Run `python3 archivesPY/test_telegram.py` first
 2. Check logs for specific error messages
 3. Verify `.env` configuration
 4. Ensure bot has been activated (send message first)

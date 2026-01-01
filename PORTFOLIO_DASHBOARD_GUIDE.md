@@ -565,7 +565,7 @@ The Per-Year XIRR tab uses **year-end snapshots** for calculations, with the fol
 **Priority Order for Prices:**
 1. **Year_End_Price** in snapshot (most accurate)
 2. **yFinance API** (historical year-end data)
-3. **tempCurrentPrices.csv** (cached current prices)
+3. **backupPrices.csv** (cached current prices)
 4. **Book Value** (average buy price - least accurate)
 
 **Common Warnings:**
@@ -625,7 +625,7 @@ This fetches actual Dec 31 closing prices for each year and updates all snapshot
 **Data Files Used:**
 - `archivesCSV/cashflows_snapshot_YYYY.json` - Cash flow data per year
 - `archivesCSV/holdings_snapshot_YYYY.csv` - Year-end holdings with prices
-- `archivesCSV/tempCurrentPrices.csv` - Cached current prices (fallback)
+- `archivesCSV/backupPrices.csv` - Cached current prices (fallback)
 
 **Calculation Method:**
 - Uses `pyxirr` library (same as portfolio overview)

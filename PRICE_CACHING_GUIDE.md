@@ -1,7 +1,7 @@
 # Price Caching System
 
 ## Overview
-The portfolio calculator intelligently caches prices in `archivesCSV/tempCurrentPrices.csv` to handle Yahoo Finance rate limits efficiently. When API calls fail (429 rate limit), the system automatically uses cached prices.
+The portfolio calculator intelligently caches prices in `archivesCSV/backupPrices.csv` to handle Yahoo Finance rate limits efficiently. When API calls fail (429 rate limit), the system automatically uses cached prices.
 
 ## CSV Structure
 **Simple 2-column format:**
@@ -29,7 +29,7 @@ Every portfolio calculation shows where each price came from:
 |------|--------|---------|
 | ✅ | Yahoo Finance | Fetched fresh from yfinance API |
 | ✅ | NSE API (SGBs) | Fetched fresh from NSE (Sovereign Gold Bonds) |
-| 💾 | Cached | Loaded from archivesCSV/tempCurrentPrices.csv (rate limit fallback) |
+| 💾 | Cached | Loaded from archivesCSV/backupPrices.csv (rate limit fallback) |
 | ❌ | Not Available | Not found in API or cache (marked as NaN) |
 
 ### Example Output
@@ -40,7 +40,7 @@ Every portfolio calculation shows where each price came from:
 ----------------------------------------------------------------------
 ✅ NSE API (SGBs): 1/36 tickers
    • SGBSEP29VI
-💾 Cached (archivesCSV/tempCurrentPrices.csv): 35/36 tickers
+💾 Cached (archivesCSV/backupPrices.csv): 35/36 tickers
    • INF959L01FV0, INF209KB18C5, CFLT, VOO, QQQM
    ... and 30 more
 ⚠️  Yahoo Finance rate limit hit 35 times
@@ -105,13 +105,13 @@ summary = calculate_portfolio_summary()
 ```
 📂 Loading archivesCSV/tradebook.csv...
    Loaded 4891 trades
-📋 Loaded 36 prices from archivesCSV/tempCurrentPrices.csv
-💾 Saved 1 new/updated prices to archivesCSV/tempCurrentPrices.csv
+📋 Loaded 36 prices from archivesCSV/backupPrices.csv
+💾 Saved 1 new/updated prices to archivesCSV/backupPrices.csv
 
 📊 PRICE SOURCE SUMMARY
 ----------------------------------------------------------------------
 ✅ NSE API (SGBs): 1/36 tickers
-💾 Cached (archivesCSV/tempCurrentPrices.csv): 35/36 tickers
+💾 Cached (archivesCSV/backupPrices.csv): 35/36 tickers
 ⚠️  Yahoo Finance rate limit hit 35 times
 ----------------------------------------------------------------------
 
@@ -124,7 +124,7 @@ You can manually update prices if needed:
 
 ```bash
 # Edit the CSV with any text editor
-nano archivesCSV/tempCurrentPrices.csv
+nano archivesCSV/backupPrices.csv
 ```
 
 Just maintain the 2-column format with `Ticker,Current Price` header.

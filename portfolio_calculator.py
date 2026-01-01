@@ -268,9 +268,9 @@ def get_currently_held_tickers(df):
     return currently_held_tickers
 
 
-def load_temp_prices(temp_csv_path='archivesCSV/tempCurrentPrices.csv'):
+def load_temp_prices(temp_csv_path='archivesCSV/backupPrices.csv'):
     """
-    Load prices from temporary CSV file as fallback when Yahoo Finance has rate limits
+    Load prices from backup CSV file as fallback when Yahoo Finance has rate limits
     Supports both old format (Ticker, Current Price) and new format (Ticker, Date, Closing Price)
     
     Returns:
@@ -313,13 +313,13 @@ def load_temp_prices(temp_csv_path='archivesCSV/tempCurrentPrices.csv'):
         print(f"📋 Loaded {len(temp_prices)} prices from {temp_csv_path}")
         return temp_prices
     except Exception as e:
-        print(f"⚠️ Could not load temp prices from {temp_csv_path}: {e}")
+        print(f"⚠️ Could not load backup prices from {temp_csv_path}: {e}")
         return {}
 
 
-def save_temp_prices(prices_dict, temp_csv_path='archivesCSV/tempCurrentPrices.csv'):
+def save_temp_prices(prices_dict, temp_csv_path='archivesCSV/backupPrices.csv'):
     """
-    Save/update prices to temporary CSV file
+    Save/update prices to backup CSV file
     Maintains new format (Ticker, Date, Closing Price) if it exists, 
     otherwise creates old format (Ticker, Current Price)
     
@@ -423,7 +423,7 @@ def fetch_price_from_yfinance(ticker):
 
 
 def get_market_data(df, currently_held_tickers):
-    """Fetch current market prices for held tickers and cache them in archivesCSV/tempCurrentPrices.csv"""
+    """Fetch current market prices for held tickers and cache them in archivesCSV/backupPrices.csv"""
     market_data = {}
     company_names = {}
     previous_close_data = {}
@@ -525,6 +525,7 @@ def get_market_data(df, currently_held_tickers):
                     market_data[ticker] = None  # Will be treated as NaN
                     company_names[ticker] = ticker
                     not_available.append(ticker)
+                    print(f"❌ {ticker}: Not in cache yet. Price will be fetched on next successful refresh.")
     
     # Save newly fetched prices to temp CSV
     if newly_fetched_prices:
@@ -550,7 +551,7 @@ def get_market_data(df, currently_held_tickers):
             print(f"   • {ticker}")
     
     if temp_fallback_used:
-        print(f"💾 Cached (archivesCSV/tempCurrentPrices.csv): {len(temp_fallback_used)}/{total_tickers} tickers")
+        print(f"💾 Cached (archivesCSV/backupPrices.csv): {len(temp_fallback_used)}/{total_tickers} tickers")
         for ticker in temp_fallback_used[:5]:  # Show first 5
             print(f"   • {ticker}")
         if len(temp_fallback_used) > 5:
@@ -775,7 +776,6 @@ def calculate_portfolio_summary(df=None):
                     continue
                 
                 fx_rate = ticker_trades['Exchange_Rate'].iloc[0]
-                buys_only = ticker_trades[ticker_trades['Type'] == 'BUY']
                 avg_buy_price = (buys_only['Price'] * buys_only['Qty']).sum() / buy_qty
                 
                 invested_amt = float(current_qty) * float(avg_buy_price) * float(fx_rate)

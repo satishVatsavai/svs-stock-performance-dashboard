@@ -90,7 +90,7 @@ This will:
 ### Quick References
 
 - **[Requirements](requirements.txt)** - Python dependencies
-- **[Test Telegram](test_telegram.py)** - Verify Telegram bot setup
+- **[Test Telegram](archivesPY/test_telegram.py)** - Verify Telegram bot setup
 
 ## 🎯 Workflow
 
@@ -259,7 +259,7 @@ Found 2 stock(s) in profit range:
 | Dashboard won't load | Run `python3 tradebook_builder.py consolidate` |
 | Holdings not showing | Wait 5 min (cache/rate limit), then refresh |
 | 429 errors | Normal - rate limiting protection active |
-| Telegram not working | Run `python3 test_telegram.py` |
+| Telegram not working | Run `python3 archivesPY/test_telegram.py` |
 | Wrong calculations | Run `python3 tradebook_builder.py rebuild` |
 
 **For detailed troubleshooting, see the relevant guide:**
