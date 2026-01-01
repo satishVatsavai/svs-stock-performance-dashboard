@@ -2,7 +2,8 @@
 Portfolio Summary Calculator Module
 Extracts portfolio calculation logic for reuse in dashboard and Telegram notifications
 """
-import yfinance as yf
+# YFINANCE IMPORT COMMENTED OUT TO AVOID RATE LIMITS - USING CACHED PRICES ONLY
+# import yfinance as yf
 import warnings
 import logging
 # Suppress urllib3 SSL warning for macOS with LibreSSL
@@ -78,84 +79,37 @@ def get_sgb_price(ticker):
 
 def get_exchange_rate(currency, trade_date):
     """
-    Get historical exchange rate for a given currency and date.
+    Get exchange rate for a given currency and date.
     
-    Data sources (in order of preference):
-    1. Yahoo Finance
-    2. exchangerate-api.com (current rate as fallback)
-    3. Environment variable FALLBACK_USD_INR_RATE (last resort)
+    Note: Exchange rates are pre-calculated and stored in tradebook.csv.
+    This function is only used during tradebook building (archivesPY/tradebook_builder.py).
+    
+    For normal dashboard operation, rates are read directly from the Exchange_Rate column.
     """
     if currency == 'INR':
         return 1.0
     
-    import sys
-    from io import StringIO
-    import requests
+    # Prompt user for the exchange rate
+    print(f"\n💱 Exchange rate needed for {currency} on {trade_date.strftime('%Y-%m-%d')}")
+    print(f"   Please look up the historical rate and enter it below.")
+    print(f"   (You can find historical rates at: https://www.xe.com/currency-charts/)")
     
-    # Try Yahoo Finance first
-    try:
-        start_date = trade_date - pd.Timedelta(days=7)
-        end_date = trade_date + pd.Timedelta(days=1)
-        
-        # Suppress all output from yfinance
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        sys.stdout = StringIO()
-        sys.stderr = StringIO()
-        
+    while True:
         try:
-            # Try multiple ticker formats
-            for ticker in ['INR=X', 'USDINR=X']:
-                try:
-                    fx_data = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
-                    
-                    if not fx_data.empty:
-                        rate = float(fx_data['Close'].iloc[-1].iloc[0]) if hasattr(fx_data['Close'].iloc[-1], 'iloc') else float(fx_data['Close'].iloc[-1])
-                        sys.stdout = old_stdout
-                        sys.stderr = old_stderr
-                        print(f"✅ Exchange rate fetched from yFinance: 1 USD = {rate} INR")
-                        return round(rate, 2)
-                except Exception:
-                    continue
-            
-            # Try history method as last Yahoo attempt
-            for ticker in ['INR=X', 'USDINR=X']:
-                try:
-                    fx_data = yf.Ticker(ticker).history(period='5d')
-                    if not fx_data.empty:
-                        rate = float(fx_data['Close'].iloc[-1])
-                        sys.stdout = old_stdout
-                        sys.stderr = old_stderr
-                        print(f"✅ Exchange rate fetched from yFinance: 1 USD = {rate} INR")
-                        return round(rate, 2)
-                except Exception:
-                    continue
-        finally:
-            # Always restore stdout/stderr
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
-            
-    except Exception:
-        pass  # Continue to fallback
-    
-    # Try exchangerate-api.com (current rate - free API)
-    try:
-        url = "https://api.exchangerate-api.com/v4/latest/USD"
-        response = requests.get(url, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if 'rates' in data and 'INR' in data['rates']:
-                rate = float(data['rates']['INR'])
-                print(f"⚠️ Using current exchange rate from exchangerate-api.com: 1 USD = {rate} INR")
+            rate_input = input(f"   Enter USD to INR rate for {trade_date.strftime('%Y-%m-%d')}: ").strip()
+            rate = float(rate_input)
+            if rate > 0:
+                print(f"✅ Using exchange rate: 1 USD = {rate} INR")
                 return round(rate, 2)
-    except Exception:
-        pass  # Continue to last resort
-    
-    # Fallback to configured rate from .env file (default: 83.0)
-    fallback_rate = float(os.getenv('FALLBACK_USD_INR_RATE', '83.0'))
-    print(f"⚠️ Using fallback exchange rate from .env: 1 USD = {fallback_rate} INR")
-    return fallback_rate
+            else:
+                print("❌ Rate must be a positive number. Please try again.")
+        except ValueError:
+            print("❌ Invalid input. Please enter a numeric value (e.g., 83.50)")
+        except KeyboardInterrupt:
+            print("\n⚠️  Interrupted. Using fallback rate from .env")
+            fallback_rate = float(os.getenv('FALLBACK_USD_INR_RATE', '83.0'))
+            print(f"⚠️ Using fallback exchange rate from .env: 1 USD = {fallback_rate} INR")
+            return fallback_rate
 
 
 def load_trade_data():
@@ -247,7 +201,7 @@ def get_latest_snapshot(snapshot_dir='archivesCSV'):
             print(f"   Will calculate XIRR from full tradebook instead")
     else:
         print(f"⚠️  Cash flows file not found: {cash_flows_file}")
-        print(f"   💡 Tip: Run 'python3 generate_snapshots.py' to regenerate with cash flows")
+        print(f"   💡 Tip: Run 'python3 archivesPY/generate_snapshots.py' to regenerate with cash flows")
     
     return snapshot_df, latest_year, cash_flows, cash_flow_dates
 
@@ -281,7 +235,7 @@ def load_trade_data_with_snapshot(force_full_recalc=False):
     
     if snapshot_df is None or snapshot_year is None:
         print("⚠️  No snapshots found - processing full tradebook")
-        print("   💡 Tip: Run 'python3 generate_snapshots.py' to create snapshots")
+        print("   💡 Tip: Run 'python3 archivesPY/generate_snapshots.py' to create snapshots")
         return df, None, None, df, None, None
     
     # Filter trades after the snapshot date
@@ -317,6 +271,7 @@ def get_currently_held_tickers(df):
 def load_temp_prices(temp_csv_path='archivesCSV/tempCurrentPrices.csv'):
     """
     Load prices from temporary CSV file as fallback when Yahoo Finance has rate limits
+    Supports both old format (Ticker, Current Price) and new format (Ticker, Date, Closing Price)
     
     Returns:
         Dictionary with ticker as key and price as value
@@ -329,11 +284,31 @@ def load_temp_prices(temp_csv_path='archivesCSV/tempCurrentPrices.csv'):
         temp_df = pd.read_csv(temp_csv_path)
         temp_prices = {}
         
-        for _, row in temp_df.iterrows():
-            ticker = row['Ticker']
-            price = float(row['Current Price']) if pd.notna(row['Current Price']) else None
-            if price is not None:
-                temp_prices[ticker] = price
+        # Check which format we're dealing with
+        if 'Closing Price' in temp_df.columns:
+            # New format: Ticker, Date, Closing Price
+            # Get the most recent price for each ticker (sorted by date)
+            for ticker in temp_df['Ticker'].unique():
+                ticker_rows = temp_df[temp_df['Ticker'] == ticker]
+                # Get rows with valid prices
+                valid_prices = ticker_rows[ticker_rows['Closing Price'].notna()]
+                if not valid_prices.empty:
+                    # Sort by date (most recent first) and get the first price
+                    if 'Date' in valid_prices.columns:
+                        valid_prices = valid_prices.sort_values('Date', ascending=False)
+                    price = float(valid_prices.iloc[0]['Closing Price'])
+                    temp_prices[ticker] = price
+        
+        elif 'Current Price' in temp_df.columns:
+            # Old format: Ticker, Current Price
+            for _, row in temp_df.iterrows():
+                ticker = row['Ticker']
+                price = float(row['Current Price']) if pd.notna(row['Current Price']) else None
+                if price is not None:
+                    temp_prices[ticker] = price
+        else:
+            print(f"⚠️ Unrecognized format in {temp_csv_path}")
+            return {}
         
         print(f"📋 Loaded {len(temp_prices)} prices from {temp_csv_path}")
         return temp_prices
@@ -345,6 +320,8 @@ def load_temp_prices(temp_csv_path='archivesCSV/tempCurrentPrices.csv'):
 def save_temp_prices(prices_dict, temp_csv_path='archivesCSV/tempCurrentPrices.csv'):
     """
     Save/update prices to temporary CSV file
+    Maintains new format (Ticker, Date, Closing Price) if it exists, 
+    otherwise creates old format (Ticker, Current Price)
     
     Args:
         prices_dict: Dictionary with ticker as key and price as value
@@ -354,11 +331,37 @@ def save_temp_prices(prices_dict, temp_csv_path='archivesCSV/tempCurrentPrices.c
         # Load existing prices
         if os.path.exists(temp_csv_path):
             existing_df = pd.read_csv(temp_csv_path)
-            existing_prices = dict(zip(existing_df['Ticker'], existing_df['Current Price']))
+            
+            # Check format
+            if 'Closing Price' in existing_df.columns and 'Date' in existing_df.columns:
+                # New format - append with current date
+                from datetime import date
+                current_date = date.today().strftime('%Y-%m-%d')
+                
+                # Create new records
+                new_records = []
+                for ticker, price in prices_dict.items():
+                    new_records.append({
+                        'Ticker': ticker,
+                        'Date': current_date,
+                        'Closing Price': price
+                    })
+                
+                if new_records:
+                    new_df = pd.DataFrame(new_records)
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                    # Sort by Ticker and Date
+                    combined_df = combined_df.sort_values(['Ticker', 'Date'], ascending=[True, False])
+                    combined_df.to_csv(temp_csv_path, index=False)
+                    print(f"💾 Saved {len(prices_dict)} new/updated prices to {temp_csv_path}")
+                    return
+            
+            # Old format
+            existing_prices = dict(zip(existing_df['Ticker'], existing_df.get('Current Price', [])))
         else:
             existing_prices = {}
         
-        # Update with new prices
+        # Update with new prices (old format)
         existing_prices.update(prices_dict)
         
         # Create DataFrame and save
@@ -372,6 +375,51 @@ def save_temp_prices(prices_dict, temp_csv_path='archivesCSV/tempCurrentPrices.c
         
     except Exception as e:
         print(f"⚠️ Could not save temp prices to {temp_csv_path}: {e}")
+
+
+def fetch_price_from_yfinance(ticker):
+    """
+    Fetch current price from Yahoo Finance for a ticker
+    
+    Args:
+        ticker: Stock ticker symbol
+        
+    Returns:
+        Tuple of (price, company_name, previous_close) if successful, (None, None, None) otherwise
+    """
+    try:
+        import yfinance as yf
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        company_name = (info.get('longName') or 
+                      info.get('shortName') or 
+                      ticker)
+        
+        price = (info.get('currentPrice') or 
+                info.get('regularMarketPrice') or 
+                info.get('previousClose') or
+                info.get('regularMarketPreviousClose'))
+        
+        prev_close = info.get('regularMarketPreviousClose') or info.get('previousClose')
+        
+        if price is None:
+            hist = stock.history(period="1mo")
+            if not hist.empty:
+                price = hist['Close'].iloc[-1]
+                if len(hist) >= 2:
+                    prev_close = hist['Close'].iloc[-2]
+        
+        if price is not None:
+            return float(price), company_name, float(prev_close) if prev_close else float(price)
+        
+        return None, company_name, None
+        
+    except Exception as e:
+        error_str = str(e)
+        if '429' in error_str or 'Too Many Requests' in error_str:
+            return 'RATE_LIMITED', None, None
+        return None, None, None
 
 
 def get_market_data(df, currently_held_tickers):
@@ -434,55 +482,37 @@ def get_market_data(df, currently_held_tickers):
                     company_names[ticker] = f"{ticker} (SGB - Error)"
                     not_available.append(ticker)
         else:
+            # Try Yahoo Finance for current holdings (ENABLED for dashboard live prices)
             price_fetched = False
-            try:
-                stock = yf.Ticker(ticker)
-                info = stock.info
-                
-                company_name = (info.get('longName') or 
-                              info.get('shortName') or 
-                              ticker)
-                company_names[ticker] = company_name
-                
-                price = (info.get('currentPrice') or 
-                        info.get('regularMarketPrice') or 
-                        info.get('previousClose') or
-                        info.get('regularMarketPreviousClose'))
-                
-                prev_close = info.get('regularMarketPreviousClose') or info.get('previousClose')
-                
-                if price is None:
-                    hist = stock.history(period="1mo")
-                    if not hist.empty:
-                        price = hist['Close'].iloc[-1]
-                        if len(hist) >= 2:
-                            prev_close = hist['Close'].iloc[-2]
-                
-                if price is not None:
-                    market_data[ticker] = price
-                    previous_close_data[ticker] = prev_close if prev_close else price
-                    newly_fetched_prices[ticker] = price  # Save fetched price
-                    yahoo_success.append(ticker)
+            
+            # YFINANCE FETCHING - Enabled for current holdings dashboard
+            price, company_name, prev_close = fetch_price_from_yfinance(ticker)  # ENABLED for current holdings
+            # price, company_name, prev_close = None, None, None  # Uncomment to disable
+            
+            # Debug warning when yFinance is disabled
+            if price is None and company_name is None and prev_close is None:
+                print(f"⚠️  WARNING: yFinance is DISABLED - Using fallback prices for {ticker}")
+            
+            if price == 'RATE_LIMITED':
+                # Rate limited - try temp prices fallback
+                yahoo_failures += 1
+                if ticker in temp_prices:
+                    market_data[ticker] = temp_prices[ticker]
+                    company_names[ticker] = company_names.get(ticker, ticker)
+                    previous_close_data[ticker] = temp_prices[ticker]
                     price_fetched = True
-                    
-            except Exception as e:
-                error_str = str(e)
-                # Check if it's a rate limit error (429)
-                if '429' in error_str or 'Too Many Requests' in error_str:
-                    yahoo_failures += 1
-                    # Try temp prices fallback
-                    if ticker in temp_prices:
-                        market_data[ticker] = temp_prices[ticker]
-                        company_names[ticker] = company_names.get(ticker, ticker)
-                        previous_close_data[ticker] = temp_prices[ticker]  # Use same price as prev close
-                        price_fetched = True
-                        temp_fallback_used.append(ticker)
-                    else:
-                        if yahoo_failures <= 3:  # Only print first few failures
-                            print(f"⚠️ Rate limit hit for {ticker}, temp price not available")
+                    temp_fallback_used.append(ticker)
                 else:
                     if yahoo_failures <= 3:
-                        print(f"⚠️ Could not fetch price for {ticker}: {e}")
+                        print(f"⚠️ Rate limit hit for {ticker}, temp price not available")
+            elif price is not None:
+                # Successfully fetched from yFinance
+                market_data[ticker] = price
+                company_names[ticker] = company_name
+                previous_close_data[ticker] = prev_close
+                newly_fetched_prices[ticker] = price
+                yahoo_success.append(ticker)
+                price_fetched = True
                 
             # If we still don't have a price, try temp prices or set as NaN
             if not price_fetched:
@@ -659,9 +689,7 @@ def apply_incremental_trades(snapshot_df, incremental_df):
                             
                             lot['qty'] -= qty_to_match
                             sell_qty_remaining -= qty_to_match
-                    
-                    holding['qty'] -= trade['Qty']
-            
+    
             # Recalculate average price from remaining lots
             total_qty = sum(lot['qty'] for lot in holding['buy_lots'] if lot['qty'] > 0)
             total_value = sum(lot['qty'] * lot['price'] for lot in holding['buy_lots'] if lot['qty'] > 0)

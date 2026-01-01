@@ -173,13 +173,13 @@ def main():
     print_step(4, total_steps, "Creating holdings snapshots for all years")
     
     success = run_command(
-        'python3 generate_snapshots.py',
+        'python3 archivesPY/generate_snapshots.py',
         "Generating snapshots from tradebook"
     )
     
     if not success:
         print("\n⚠️  Snapshot generation had issues, but tradebook is ready")
-        print("   You can try running: python3 generate_snapshots.py")
+        print("   You can try running: python3 archivesPY/generate_snapshots.py")
     
     # Final summary
     print_header("✅ REBUILD COMPLETE!")
@@ -197,7 +197,7 @@ def main():
             print(f"   - {snapshot.name}")
     
     print("\n🎯 Next Steps:")
-    print("   1. Verify data: python3 generate_snapshots.py verify archivesCSV/holdings_snapshot_2025.csv")
+    print("   1. Verify data: python3 archivesPY/generate_snapshots.py verify archivesCSV/holdings_snapshot_2025.csv")
     print("   2. View dashboard: streamlit run performanceDashboard.py")
     
     print("\n✨ Your portfolio data has been completely rebuilt!")

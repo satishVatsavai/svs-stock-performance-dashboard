@@ -9,6 +9,7 @@ Complete guide for using the Streamlit-based portfolio dashboard to view holding
 - [Features](#features)
 - [Handling Missing Price Data](#handling-missing-price-data)
 - [Understanding Metrics](#understanding-metrics)
+- [Per-Year XIRR Analysis](#per-year-xirr-analysis)
 - [Performance & Caching](#performance--caching)
 - [Troubleshooting](#troubleshooting)
 
@@ -80,7 +81,7 @@ The dashboard will open in your browser at `http://localhost:8501`
 - **💰 Refresh Prices** (Normal Use): Fast refresh using snapshots
 - **🔄 Full Recalc** (Verification): Processes full tradebook, slower but comprehensive
 
-### 2. Holdings Tab
+### 2. Portfolio Overview Tab
 
 **Interactive table showing:**
 
@@ -102,7 +103,88 @@ The dashboard will open in your browser at `http://localhost:8501`
 - 🟧 **Orange**: Missing price data (cannot calculate P&L)
 - ⚪ **White**: Normal holdings
 
-### 3. Trade Book Tab
+### 3. Per-Year XIRR Tab
+
+**Comprehensive year-by-year performance analysis showing:**
+
+#### Summary Metrics (Top Row)
+- **Current XIRR**: Latest cumulative return with improvement from inception
+- **Total Invested**: Amount invested up to latest year-end
+- **Portfolio Value**: Portfolio value at latest year-end
+- **Total Returns**: Cash returns received over the period
+
+#### Year-by-Year Breakdown Table
+
+Shows detailed metrics for each year (e.g., 2022-2025):
+
+| 📊 | Year | XIRR % | Period | First Invest | Total Invested | Total Returns | Portfolio Value | Absolute Gain | Holdings | Transactions |
+|---|------|--------|--------|--------------|----------------|---------------|-----------------|---------------|----------|--------------|
+| 🚀 | 2022 | -0.00% | 1.3 yrs | Sep 13, 2021 | ₹43,40,900 | ₹0 | ₹43,40,900 | ₹-100 | 3 | 5 |
+| 📈 | 2023 | 6.77% | 2.3 yrs | Sep 13, 2021 | ₹2,62,68,344 | ₹12,45,678 | ₹1,49,94,127 | ₹1,12,85,783 | 117 | 234 |
+| ✅ | 2024 | 15.68% | 3.3 yrs | Sep 13, 2021 | ₹9,10,81,320 | ₹45,12,345 | ₹3,68,44,424 | ₹4,57,63,104 | 28 | 312 |
+| ➡️ | 2025 | 10.62% | 4.3 yrs | Sep 13, 2021 | ₹14,14,56,133 | ₹89,23,456 | ₹5,36,01,411 | ₹6,25,24,867 | 33 | 456 |
+
+**Status Emoji Indicators:**
+- 🚀 **>20%**: Exceptional performance
+- 📈 **15-20%**: Strong performance
+- ✅ **10-15%**: Good performance
+- ➡️ **0-10%**: Solid/Modest performance
+- 📉 **<0%**: Negative performance
+
+**Color Coding:**
+- **Dark Green** (>20%): 🚀 Exceptional
+- **Forest Green** (15-20%): 📈 Strong
+- **Lime Green** (10-15%): ✅ Good
+- **Light Green** (5-10%): Solid
+- **Light Yellow** (0-5%): Modest
+- **Light Red** (<0%): Negative
+
+#### Year-over-Year Changes Table
+
+Compares XIRR performance between consecutive years:
+
+| Trend | Period | Previous XIRR | Current XIRR | Change | Invested Change | Value Change |
+|-------|--------|---------------|--------------|--------|-----------------|--------------|
+| 📈 | 2023 → 2024 | 6.77% | 15.68% | **+8.91%** | +₹6,48,12,976 | +₹2,18,50,297 |
+| 📉 | 2024 → 2025 | 15.68% | 10.62% | **-5.06%** | +₹5,03,74,813 | +₹1,67,56,987 |
+
+**Trend Indicators:**
+- 📈 Green rows: Positive XIRR improvement
+- 📉 Red rows: XIRR decline
+
+#### Download Feature
+- **📥 Download Raw Data (JSON)** button
+- Exports complete yearly metrics including price source breakdown
+- Useful for external analysis or record-keeping
+
+#### Help Section
+Expandable "ℹ️ How to interpret this data" section explaining:
+- What cumulative XIRR means
+- How to read year-over-year changes
+- Price sources and their impact on accuracy
+- How to improve data accuracy
+
+**Understanding Cumulative XIRR:**
+
+Each year shows **cumulative return from your FIRST investment** (e.g., Sep 13, 2021) up to that year-end.
+
+**Example:**
+- **2022: -0.00%** → Portfolio from Sep 2021 to Dec 2022 had near-zero return
+- **2023: 6.77%** → Portfolio from Sep 2021 to Dec 2023 grew at 6.77% annually
+- **2024: 15.68%** → Portfolio from Sep 2021 to Dec 2024 grew at 15.68% annually
+- **2025: 10.62%** → Portfolio from Sep 2021 to Dec 2025 is growing at 10.62% annually
+
+**Year-over-Year Change Example:**
+- **2023 → 2024: +8.91%** → Cumulative XIRR improved significantly (strong 2024 performance)
+- **2024 → 2025: -5.06%** → Cumulative XIRR declined (but still positive overall)
+
+**Key Points:**
+- ✅ NOT isolated yearly returns - cumulative from inception
+- ✅ Shows portfolio trajectory over time
+- ✅ Helps identify periods of strong/weak performance
+- ✅ Year-over-year changes reveal performance trends
+
+### 4. Trade Book Tab
 
 **Complete transaction history:**
 
@@ -412,6 +494,242 @@ Number of unique tickers currently held with valid prices.
 
 ---
 
+## Per-Year XIRR Analysis
+
+The **📅 Per-Year XIRR** tab provides comprehensive year-by-year analysis of your portfolio's performance, helping you understand how your investments have grown over time.
+
+### What is Cumulative XIRR?
+
+**Key Concept:** Each year's XIRR shows the **annualized return from your very first investment** up to that year-end, NOT an isolated yearly return.
+
+**Think of it as:** "If I had invested all my money at once on Day 1, what would my annualized return be by the end of this year?"
+
+**Example Interpretation:**
+
+```
+First Investment: Sep 13, 2021
+
+Year 2022: XIRR = -0.00%
+→ From Sep 2021 to Dec 2022 (1.3 years), portfolio had near-zero return
+
+Year 2023: XIRR = 6.77%
+→ From Sep 2021 to Dec 2023 (2.3 years), portfolio grew at 6.77% per year
+
+Year 2024: XIRR = 15.68%
+→ From Sep 2021 to Dec 2024 (3.3 years), portfolio grew at 15.68% per year
+
+Year 2025: XIRR = 10.62%
+→ From Sep 2021 to Dec 2025 (4.3 years), portfolio grew at 10.62% per year
+```
+
+### Why Cumulative vs Isolated Returns?
+
+**Cumulative XIRR (What we show):**
+- ✅ Industry-standard metric for portfolio performance
+- ✅ Accounts for all cash flows from inception
+- ✅ Considers timing of investments (when you added money)
+- ✅ Shows true long-term portfolio trajectory
+- ✅ Comparable across different investment periods
+
+**Isolated Yearly Returns (Not shown):**
+- ❌ Can be misleading with irregular cash flows
+- ❌ Doesn't account for investment timing
+- ❌ Hard to interpret when adding/removing money
+- ❌ Not standard in financial industry
+
+### Reading Year-over-Year Changes
+
+The YoY changes table shows how your cumulative XIRR **improved or declined** between years.
+
+**Positive Change (📈 Green):**
+```
+2023 → 2024: +8.91%
+→ Strong 2024 performance improved overall portfolio return
+→ Cumulative XIRR went from 6.77% to 15.68%
+```
+
+**Negative Change (📉 Red):**
+```
+2024 → 2025: -5.06%
+→ 2025 underperformed, reducing overall portfolio return
+→ Cumulative XIRR dropped from 15.68% to 10.62%
+→ But still positive! Portfolio is still growing
+```
+
+**Important:** A negative YoY change doesn't mean you lost money! It means recent performance was lower than the historical average.
+
+### Data Sources and Accuracy
+
+The Per-Year XIRR tab uses **year-end snapshots** for calculations, with the following data sources:
+
+**Priority Order for Prices:**
+1. **Year_End_Price** in snapshot (most accurate)
+2. **yFinance API** (historical year-end data)
+3. **tempCurrentPrices.csv** (cached current prices)
+4. **Book Value** (average buy price - least accurate)
+
+**Common Warnings:**
+```
+⚠️ Using book value for TICKER_NAME (No Year_End_Price available)
+→ XIRR calculation may be slightly underestimated
+→ Generate year-end prices for better accuracy
+```
+
+**Impact on Accuracy:**
+- Using **Year_End_Price**: ✅✅✅ Highly accurate
+- Using **yFinance/cached**: ✅✅ Good accuracy (within 1-2%)
+- Using **Book Value**: ✅ Fair accuracy (may underestimate by 3-5%)
+
+### How to Improve Accuracy
+
+**Regenerate Snapshots with Year-End Prices**
+```bash
+python3 archivesPY/generate_snapshots.py
+```
+This fetches actual Dec 31 closing prices for each year and updates all snapshots.
+
+### Use Cases
+
+**1. Performance Tracking**
+- Monitor if you're meeting target returns (e.g., beating Nifty50's ~12%)
+- Identify years of exceptional or poor performance
+- Understand long-term portfolio trajectory
+
+**2. Investment Strategy**
+- See impact of major investments (look at "Invested Change" column)
+- Correlate market events with performance changes
+- Plan future investment timing
+
+**3. Goal Planning**
+- Check if current XIRR supports retirement/goal targets
+- Calculate how much more to invest to reach goals
+- Adjust risk based on historical volatility
+
+**4. Comparative Analysis**
+- Compare your XIRR vs market indices
+- Benchmark against inflation (~6-7% in India)
+- Evaluate fund manager performance (if using managed funds)
+
+**5. Tax Planning**
+- Year-end portfolio values for tax filings
+- Understand gains distribution across years
+- Plan harvest of gains/losses
+
+### Technical Details
+
+**Caching:**
+- Per-Year XIRR data cached for **1 hour** (3600 seconds)
+- Portfolio overview cached for **5 minutes** (300 seconds)
+- Use refresh buttons to override cache when needed
+
+**Data Files Used:**
+- `archivesCSV/cashflows_snapshot_YYYY.json` - Cash flow data per year
+- `archivesCSV/holdings_snapshot_YYYY.csv` - Year-end holdings with prices
+- `archivesCSV/tempCurrentPrices.csv` - Cached current prices (fallback)
+
+**Calculation Method:**
+- Uses `pyxirr` library (same as portfolio overview)
+- FIFO (First In, First Out) for cost basis
+- Considers all cash flows: BUYs, SELLs, dividends (if tracked)
+- Year-end portfolio value treated as final cash inflow
+
+**Functions:**
+- `calculate_xirr_per_year()` in `portfolio_calculator.py` (line 1146)
+- `load_yearly_xirr_data()` in `performanceDashboard.py` (cached wrapper)
+- `format_yearly_xirr_report()` for console output
+
+### Tips for Best Results
+
+**1. Regular Snapshot Updates**
+```bash
+# Run quarterly or after major market movements
+python3 archivesPY/generate_snapshots.py
+```
+
+**2. Price Accuracy**
+- Ensure tickers in tradebook match Yahoo Finance format
+- Use `.NS` suffix for NSE stocks (e.g., `RELIANCE.NS`)
+- US stocks need no suffix (e.g., `AAPL`)
+
+**3. Data Validation**
+- Review year-by-year breakdown for anomalies
+- Check if "Holdings" count makes sense for each year
+- Verify "Total Invested" increases logically over time
+
+**4. Understanding Trends**
+- Look for consistent XIRR growth (📈 good sign)
+- Investigate sudden drops (may indicate market correction)
+- Compare with major market events (COVID crash, bull runs)
+
+**5. Export for Analysis**
+- Use "📥 Download Raw Data (JSON)" button
+- Import into Excel/Python for custom analysis
+- Track XIRR changes over multiple dashboard runs
+
+### Limitations and Considerations
+
+**⚠️ Important to Know:**
+
+1. **Cumulative Nature**
+   - Not isolated yearly returns
+   - Later years include all previous performance
+   - A bad year affects all future cumulative XIRRs
+
+2. **Data Dependencies**
+   - Accuracy depends on price data quality
+   - Missing Year_End_Price uses fallbacks (less accurate)
+   - Book values underestimate returns
+
+3. **Timing Effects**
+   - Large investments in down markets improve XIRR
+   - Large investments in up markets may reduce XIRR
+   - Year-end cutoff is Dec 31 (not customizable)
+
+4. **Snapshot Limitations**
+   - Shows only holdings held at year-end
+   - Doesn't show intra-year trades that were closed
+   - Realized profits from SELLs included in returns
+
+5. **Comparison Context**
+   - Your XIRR depends on when you invested
+   - Can't directly compare with others' XIRRs
+   - Market index returns may differ based on timing
+
+### Dashboard Layout
+
+```
+📊 SV's Stock Portfolio
+┌─────────────────────────────────────────────────────────────┐
+│  Total Invested | Current Value | Unrealized P&L | XIRR ... │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│  📈 Portfolio Overview | 📅 Per-Year XIRR | 📖 Trade Book   │
+├─────────────────────────────────────────────────────────────┤
+│                                                               │
+│  [Per-Year XIRR Tab]                                         │
+│                                                               │
+│  📊 Cumulative XIRR Summary                                  │
+│  ┌────────────────────────────────────────────────┐         │
+│  │ Current XIRR | Total Invested | Portfolio Value│         │
+│  │ 10.62% (+10.62 since inception) | ₹14.14 Cr    │         │
+│  └────────────────────────────────────────────────┘         │
+│                                                               │
+│  📈 Year-by-Year Breakdown                                   │
+│  [Color-coded table: 2022, 2023, 2024, 2025]                │
+│  [Status emojis: 🚀📈✅➡️📉]                                 │
+│                                                               │
+│  📊 Year-over-Year XIRR Changes                              │
+│  [Trend table: 2023→2024 (+8.91%), 2024→2025 (-5.06%)]    │
+│                                                               │
+│  📥 Download Raw Data (JSON)                                 │
+│  ℹ️ How to interpret this data [expandable]                │
+│                                                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Performance & Caching
 
 ### How It Works
@@ -480,6 +798,22 @@ if 'data_loaded' not in st.session_state:
 - Wait 5 minutes between manual refreshes
 - Use "Full Recalc" sparingly (processes all tickers)
 
+### Cache Duration
+
+**Portfolio Overview Tab:**
+- **Cache TTL**: 5 minutes (300 seconds)
+- **What's cached**: Price data, holdings calculation, metrics
+- **When to refresh**: After market hours or significant movements
+
+**Per-Year XIRR Tab:**
+- **Cache TTL**: 1 hour (3600 seconds)
+- **What's cached**: Yearly XIRR calculations, year-end snapshots
+- **When to refresh**: After regenerating snapshots or fetching historical prices
+
+**Trade Book Tab:**
+- **Cache**: None (reads directly from tradebook.csv)
+- **Updates**: Real-time when tradebook changes
+
 ---
 
 ## Troubleshooting
@@ -531,7 +865,7 @@ grep -v "^Date" archivesCSV/tradebook.csv | head -5
 
 **Regenerate snapshots:**
 ```bash
-python3 generate_snapshots.py
+python3 archivesPY/generate_snapshots.py
 ```
 
 **Rebuild tradebook:**
@@ -573,7 +907,7 @@ ls -la archivesCSV/holdings_snapshot_*.csv
 **No snapshots:**
 ```bash
 # Generate snapshots
-python3 generate_snapshots.py
+python3 archivesPY/generate_snapshots.py
 
 # Verify creation
 ls -la archivesCSV/holdings_snapshot_*.csv

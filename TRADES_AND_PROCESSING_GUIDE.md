@@ -25,7 +25,7 @@ Complete guide for managing trade files, building tradebook, creating holdings s
 
 On January 1st of each new year:
 ```bash
-python3 generate_snapshots.py single 2026
+python3 archivesPY/generate_snapshots.py single 2026
 ```
 
 ---
@@ -248,17 +248,17 @@ INFY.NS,100,1450.00,145000.00,0,INR,1.0,False
 
 #### Generate All Snapshots (2022-2025)
 ```bash
-python3 generate_snapshots.py
+python3 archivesPY/generate_snapshots.py
 ```
 
 #### Generate Snapshot for Specific Year
 ```bash
-python3 generate_snapshots.py single 2025
+python3 archivesPY/generate_snapshots.py single 2025
 ```
 
 #### Verify a Snapshot
 ```bash
-python3 generate_snapshots.py verify archivesCSV/holdings_snapshot_2025.csv
+python3 archivesPY/generate_snapshots.py verify archivesCSV/holdings_snapshot_2025.csv
 ```
 
 **Example Output:**
@@ -416,7 +416,7 @@ ls -la archivesCSV/holdings_snapshot_*.csv
 **Incorrect values:**
 ```bash
 # Regenerate snapshots
-python3 generate_snapshots.py
+python3 archivesPY/generate_snapshots.py
 
 # Use dashboard's "Full Recalc" to compare
 ```
@@ -524,7 +524,7 @@ python3 tradebook_builder.py status
 **Annual Maintenance:**
 ```
 January 1st each year:
-→ python3 generate_snapshots.py single [previous_year]
+→ python3 archivesPY/generate_snapshots.py single [previous_year]
 → New snapshot ready for the new year!
 ```
 
