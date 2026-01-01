@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from portfolio_calculator import calculate_detailed_portfolio, format_indian_number, calculate_xirr_per_year
+from portfolio_calculator import calculate_detailed_portfolio, format_indian_number
 
 def nse_get_advances_declines(*args, **kwargs):
     """Stub for `nse_get_advances_declines` to avoid importing heavy
@@ -19,11 +19,6 @@ def nse_get_advances_declines(*args, **kwargs):
 def load_portfolio_data(force_recalc=False):
     """Load and calculate portfolio data with caching to avoid repeated API calls"""
     return calculate_detailed_portfolio(force_full_recalc=force_recalc)
-
-@st.cache_data(ttl=3600)  # Cache for 1 hour (3600 seconds)
-def load_yearly_xirr_data():
-    """Load per-year XIRR data with caching"""
-    return calculate_xirr_per_year()
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="SV's Portfolio", layout="wide")
@@ -74,7 +69,7 @@ try:
     st.markdown("---")
     
     # --- STEP 3: CREATE TABS ---
-    tab1, tab2, tab3 = st.tabs(["📈 Portfolio Overview", "📅 Per-Year XIRR", "📖 Trade Book"])
+    tab1, tab2 = st.tabs(["📈 Portfolio Overview", "📖 Trade Book"])
     
     # --- TAB 1: PORTFOLIO OVERVIEW ---
     with tab1:
@@ -114,179 +109,8 @@ try:
         if missing_count > 0:
             st.warning(f"⚠️ {missing_count} holding(s) with missing price data (highlighted in orange). P/L and XIRR calculations exclude these holdings.")
     
-    # --- TAB 2: PER-YEAR XIRR ---
+    # --- TAB 2: TRADEBOOK ---
     with tab2:
-        st.subheader("📅 Per-Year XIRR Performance")
-        
-        with st.spinner('Calculating per-year XIRR...'):
-            yearly_data = load_yearly_xirr_data()
-        
-        if not yearly_data:
-            st.warning("⚠️ No yearly XIRR data available. Run `python3 archivesPY/generate_snapshots.py` to create snapshots.")
-        else:
-            # Display summary metrics
-            st.markdown("### 📊 Cumulative XIRR Summary")
-            st.info("**Note:** Each year shows cumulative return from your FIRST investment up to that year-end, NOT the isolated return for that year.")
-            
-            # Create columns for key metrics
-            latest = yearly_data[-1]
-            earliest = yearly_data[0]
-            
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Current XIRR", f"{latest['xirr']:.2f}%", 
-                       delta=f"{latest['xirr'] - earliest['xirr']:+.2f}% from {earliest['year']}")
-            col2.metric("Total Invested", f"₹{format_indian_number(latest['total_invested'])}")
-            col3.metric("Portfolio Value", f"₹{format_indian_number(latest['year_end_value'])}")
-            col4.metric("Total Returns", f"₹{format_indian_number(latest['total_returns'])}")
-            
-            st.markdown("---")
-            
-            # Create a detailed table
-            st.markdown("### 📈 Year-by-Year Breakdown")
-            
-            table_data = []
-            for data in yearly_data:
-                year = data['year']
-                xirr_val = data['xirr']
-                invested = data['total_invested']
-                returns = data['total_returns']
-                value = data['year_end_value']
-                holdings = data['holdings_count']
-                trades = data['cash_flows_count']
-                period_days = data.get('period_days', 0)
-                period_years = period_days / 365.25
-                first_date = data.get('first_investment_date', 'N/A')
-                
-                # Calculate absolute gain
-                abs_gain = value - invested + returns
-                
-                # Emoji for performance
-                if xirr_val >= 20:
-                    emoji = "🚀"
-                elif xirr_val >= 15:
-                    emoji = "📈"
-                elif xirr_val >= 10:
-                    emoji = "✅"
-                elif xirr_val >= 0:
-                    emoji = "➡️"
-                else:
-                    emoji = "📉"
-                
-                table_data.append({
-                    "Status": emoji,
-                    "Year": year,
-                    "XIRR %": f"{xirr_val:.2f}%",
-                    "Period (Years)": f"{period_years:.1f}",
-                    "From Date": first_date,
-                    "Total Invested": f"₹{format_indian_number(invested)}",
-                    "Total Returns": f"₹{format_indian_number(returns)}",
-                    "Portfolio Value": f"₹{format_indian_number(value)}",
-                    "Absolute Gain": f"₹{format_indian_number(abs_gain)}",
-                    "Holdings": holdings,
-                    "Transactions": trades
-                })
-            
-            xirr_df = pd.DataFrame(table_data)
-            
-            # Style the dataframe
-            def highlight_xirr(row):
-                xirr_str = row["XIRR %"]
-                try:
-                    xirr_val = float(xirr_str.replace('%', ''))
-                    if xirr_val >= 20:
-                        return ['background-color: #006400; color: white'] * len(row)  # Dark green
-                    elif xirr_val >= 15:
-                        return ['background-color: #228B22; color: white'] * len(row)  # Forest green
-                    elif xirr_val >= 10:
-                        return ['background-color: #32CD32; color: white'] * len(row)  # Lime green
-                    elif xirr_val >= 5:
-                        return ['background-color: #90EE90; color: black'] * len(row)  # Light green
-                    elif xirr_val >= 0:
-                        return ['background-color: #FFFFE0; color: black'] * len(row)  # Light yellow
-                    else:
-                        return ['background-color: #FFB6C1; color: black'] * len(row)  # Light red
-                except:
-                    return [''] * len(row)
-            
-            styled_xirr_df = xirr_df.style.apply(highlight_xirr, axis=1)
-            st.dataframe(styled_xirr_df, width='stretch', hide_index=True)
-            
-            # Show year-over-year changes
-            if len(yearly_data) > 1:
-                st.markdown("---")
-                st.markdown("### 📊 Year-over-Year XIRR Changes")
-                
-                yoy_data = []
-                for i in range(1, len(yearly_data)):
-                    prev = yearly_data[i-1]
-                    curr = yearly_data[i]
-                    xirr_change = curr['xirr'] - prev['xirr']
-                    change_emoji = "📈" if xirr_change >= 0 else "📉"
-                    
-                    yoy_data.append({
-                        "Trend": change_emoji,
-                        "Period": f"{prev['year']} → {curr['year']}",
-                        "Previous XIRR": f"{prev['xirr']:.2f}%",
-                        "Current XIRR": f"{curr['xirr']:.2f}%",
-                        "Change": f"{xirr_change:+.2f}%",
-                        "Invested Change": f"₹{format_indian_number(curr['total_invested'] - prev['total_invested'])}",
-                        "Value Change": f"₹{format_indian_number(curr['year_end_value'] - prev['year_end_value'])}"
-                    })
-                
-                yoy_df = pd.DataFrame(yoy_data)
-                
-                # Style year-over-year changes
-                def highlight_yoy(row):
-                    change_str = row["Change"]
-                    try:
-                        change_val = float(change_str.replace('%', '').replace('+', ''))
-                        if change_val > 0:
-                            return ['background-color: #90EE90; color: black'] * len(row)  # Light green
-                        elif change_val < 0:
-                            return ['background-color: #FFB6C1; color: black'] * len(row)  # Light red
-                        else:
-                            return [''] * len(row)
-                    except:
-                        return [''] * len(row)
-                
-                styled_yoy_df = yoy_df.style.apply(highlight_yoy, axis=1)
-                st.dataframe(styled_yoy_df, width='stretch', hide_index=True)
-            
-            # Add download button for the data
-            st.markdown("---")
-            import json
-            json_data = json.dumps(yearly_data, indent=2)
-            st.download_button(
-                label="📥 Download Raw Data (JSON)",
-                data=json_data,
-                file_name=f"yearly_xirr_{date.today().strftime('%Y%m%d')}.json",
-                mime="application/json"
-            )
-            
-            # Add explanatory note
-            with st.expander("ℹ️ How to interpret this data"):
-                st.markdown("""
-                **Cumulative XIRR:**
-                - Shows the annualized return from your **first investment** (inception) up to each year-end
-                - This is NOT the isolated return for just that year
-                - Example: If 2024 XIRR is 15.68%, it means your entire portfolio from inception to Dec 31, 2024 grew at 15.68% annually
-                
-                **Year-over-Year Changes:**
-                - Shows how your cumulative XIRR improved or declined between years
-                - Positive change = Better overall portfolio performance
-                - Negative change = Portfolio growth rate slowed down
-                
-                **Price Sources:**
-                - Year_End_Price: Actual market price stored in snapshot
-                - tempCurrentPrices.csv: Cached prices from previous fetches
-                - Book Value: Cost basis used when market price unavailable (may underestimate XIRR)
-                
-                **To improve accuracy:**
-                - Run `python3 archivesPY/generate_snapshots.py` to regenerate snapshots with year-end prices
-                """)
-    
-    # --- TAB 3: TRADEBOOK ---
-    with tab3:
         st.subheader("📖 Trade Book")
         
         # Sort trades by date (most recent first)

@@ -14,11 +14,34 @@ python3 ../archivesPY/tradebook_builder.py consolidate
 
 # 3. Generate holdings snapshots (for performance optimization)
 cd ..
-python3 generate_snapshots.py
+python3 archivesPY/generate_snapshots.py
 
 # 4. Run the dashboard
 streamlit run performanceDashboard.py
 ```
+
+### 🪵 Running with Logging (Optional)
+
+By default, logging is **disabled** for faster page loads. To enable detailed logging for debugging or monitoring:
+
+```bash
+# Option 1: Use the convenience script
+./run_with_logging.sh
+
+# Option 2: Set environment variable manually
+export ENABLE_LOGGING=true
+streamlit run performanceDashboard.py
+
+# Option 3: One-liner
+ENABLE_LOGGING=true streamlit run performanceDashboard.py
+```
+
+When logging is enabled, you'll see detailed information about:
+- Loading snapshots and tradebook
+- Price fetching sources (Yahoo Finance, NSE API, cached)
+- Cash flow calculations
+- XIRR calculations
+- Realized profit breakdowns
 
 ### ➕ Adding New Trades
 
@@ -51,6 +74,7 @@ This will:
 - **Trade history**: Complete transaction log
 - **Multi-currency support**: Automatic USD/INR conversion
 - **⚡ Snapshot optimization**: 80-90% faster calculations using year-end snapshots
+- **🚀 Fast page loads**: Logging disabled by default for instant responsiveness
 
 ### 📱 Telegram Notifications
 - **Automated updates**: 3 times daily (customizable)

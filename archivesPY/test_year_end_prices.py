@@ -4,7 +4,6 @@ Test script to verify Year_End_Price functionality in snapshots
 """
 
 import pandas as pd
-from portfolio_calculator import calculate_xirr_per_year, format_yearly_xirr_report
 
 def test_snapshot_prices():
     """Check which snapshots have Year_End_Price data"""
@@ -47,23 +46,6 @@ def test_snapshot_prices():
             print(f"❌ Year {year}: Error reading snapshot - {e}")
             print()
 
-def test_yearly_xirr():
-    """Test yearly XIRR calculation with Year_End_Price"""
-    print("=" * 70)
-    print("📈 TESTING YEARLY XIRR WITH MARKET PRICES")
-    print("=" * 70)
-    print()
-    
-    yearly_data = calculate_xirr_per_year()
-    
-    if yearly_data:
-        print()
-        print(format_yearly_xirr_report(yearly_data))
-    else:
-        print("❌ No yearly XIRR data available")
-        print("   💡 Run: python3 generate_snapshots.py")
-
 if __name__ == '__main__':
     print()
     test_snapshot_prices()
-    test_yearly_xirr()

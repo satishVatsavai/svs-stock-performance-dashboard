@@ -4,6 +4,7 @@ Extracts portfolio calculation logic for reuse in dashboard and Telegram notific
 """
 import warnings
 import logging
+import os
 # Suppress urllib3 SSL warning for macOS with LibreSSL
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
 # Suppress yfinance warnings
@@ -13,11 +14,18 @@ warnings.filterwarnings('ignore', category=DeprecationWarning)
 # Suppress yfinance logger messages
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
+# Check if logging is enabled via environment variable
+ENABLE_LOGGING = os.environ.get('ENABLE_LOGGING', 'false').lower() in ('true', '1', 'yes')
+
+def log(message):
+    """Print log message only if logging is enabled"""
+    if ENABLE_LOGGING:
+        print(message)
+
 import pandas as pd
 from pyxirr import xirr
 from datetime import date, datetime
 import glob
-import os
 import requests
 from dotenv import load_dotenv
 import time
@@ -67,25 +75,25 @@ def get_exchange_rate(currency, trade_date):
         return 1.0
     
     # Prompt user for the exchange rate
-    print(f"\n💱 Exchange rate needed for {currency} on {trade_date.strftime('%Y-%m-%d')}")
-    print(f"   Please look up the historical rate and enter it below.")
-    print(f"   (You can find historical rates at: https://www.xe.com/currency-charts/)")
+    log(f"\n💱 Exchange rate needed for {currency} on {trade_date.strftime('%Y-%m-%d')}")
+    log(f"   Please look up the historical rate and enter it below.")
+    log(f"   (You can find historical rates at: https://www.xe.com/currency-charts/)")
     
     while True:
         try:
             rate_input = input(f"   Enter USD to INR rate for {trade_date.strftime('%Y-%m-%d')}: ").strip()
             rate = float(rate_input)
             if rate > 0:
-                print(f"✅ Using exchange rate: 1 USD = {rate} INR")
+                log(f"✅ Using exchange rate: 1 USD = {rate} INR")
                 return round(rate, 2)
             else:
-                print("❌ Rate must be a positive number. Please try again.")
+                log("❌ Rate must be a positive number. Please try again.")
         except ValueError:
-            print("❌ Invalid input. Please enter a numeric value (e.g., 83.50)")
+            log("❌ Invalid input. Please enter a numeric value (e.g., 83.50)")
         except KeyboardInterrupt:
-            print("\n⚠️  Interrupted. Using fallback rate from .env")
+            log("\n⚠️  Interrupted. Using fallback rate from .env")
             fallback_rate = float(os.getenv('FALLBACK_USD_INR_RATE', '83.0'))
-            print(f"⚠️ Using fallback exchange rate from .env: 1 USD = {fallback_rate} INR")
+            log(f"⚠️ Using fallback exchange rate from .env: 1 USD = {fallback_rate} INR")
             return fallback_rate
 
 
@@ -102,9 +110,9 @@ def load_trade_data():
             f"Please create it first by running: cd archivesCSV && python3 ../archivesPY/tradebook_builder.py consolidate"
         )
     
-    print(f"📂 Loading {tradebook_file}...")
+    log(f"📂 Loading {tradebook_file}...")
     df = pd.read_csv(tradebook_file)
-    print(f"   Loaded {len(df)} trades")
+    log(f"   Loaded {len(df)} trades")
     
     # Apply standard transformations
     df['Type'] = df['Type'].str.upper()
@@ -153,10 +161,10 @@ def get_latest_snapshot(snapshot_dir='archivesCSV'):
     # Get the latest snapshot
     latest_file, latest_year = max(snapshots_with_years, key=lambda x: x[1])
     
-    print(f"📸 Loading snapshot: {os.path.basename(latest_file)}")
+    log(f"📸 Loading snapshot: {os.path.basename(latest_file)}")
     snapshot_df = pd.read_csv(latest_file)
-    print(f"   Snapshot date: {latest_year}-12-31")
-    print(f"   Holdings in snapshot: {len(snapshot_df)} tickers")
+    log(f"   Snapshot date: {latest_year}-12-31")
+    log(f"   Holdings in snapshot: {len(snapshot_df)} tickers")
     
     # Load corresponding cash flows
     import json
@@ -172,13 +180,13 @@ def get_latest_snapshot(snapshot_dir='archivesCSV'):
                 cash_flow_dates_str = cash_flows_data.get('cash_flow_dates', [])
                 # Convert date strings back to date objects
                 cash_flow_dates = [datetime.strptime(d, '%Y-%m-%d').date() for d in cash_flow_dates_str]
-                print(f"   Cash flows loaded: {len(cash_flows)} transactions")
+                log(f"   Cash flows loaded: {len(cash_flows)} transactions")
         except Exception as e:
-            print(f"⚠️  Warning: Could not load cash flows from {cash_flows_file}: {e}")
-            print(f"   Will calculate XIRR from full tradebook instead")
+            log(f"⚠️  Warning: Could not load cash flows from {cash_flows_file}: {e}")
+            log(f"   Will calculate XIRR from full tradebook instead")
     else:
-        print(f"⚠️  Cash flows file not found: {cash_flows_file}")
-        print(f"   💡 Tip: Run 'python3 archivesPY/generate_snapshots.py' to regenerate with cash flows")
+        log(f"⚠️  Cash flows file not found: {cash_flows_file}")
+        log(f"   💡 Tip: Run 'python3 archivesPY/generate_snapshots.py' to regenerate with cash flows")
     
     return snapshot_df, latest_year, cash_flows, cash_flow_dates
 
@@ -204,15 +212,15 @@ def load_trade_data_with_snapshot(force_full_recalc=False):
     
     # Check if we should use snapshots
     if force_full_recalc:
-        print("🔄 Force recalculation enabled - processing full tradebook")
+        log("🔄 Force recalculation enabled - processing full tradebook")
         return df, None, None, df, None, None
     
     # Try to load latest snapshot (with cash flows)
     snapshot_df, snapshot_year, cash_flows, cash_flow_dates = get_latest_snapshot()
     
     if snapshot_df is None or snapshot_year is None:
-        print("⚠️  No snapshots found - processing full tradebook")
-        print("   💡 Tip: Run 'python3 archivesPY/generate_snapshots.py' to create snapshots")
+        log("⚠️  No snapshots found - processing full tradebook")
+        log("   💡 Tip: Run 'python3 archivesPY/generate_snapshots.py' to create snapshots")
         return df, None, None, df, None, None
     
     # Filter trades after the snapshot date
@@ -220,10 +228,10 @@ def load_trade_data_with_snapshot(force_full_recalc=False):
     incremental_df = df[df['Date'] > snapshot_date].copy()
     
     if len(incremental_df) == 0:
-        print(f"✅ No new trades since snapshot - using snapshot only")
+        log(f"✅ No new trades since snapshot - using snapshot only")
     else:
-        print(f"📊 Processing {len(incremental_df)} trades since {snapshot_year}-12-31")
-        print(f"   (Skipped {len(df) - len(incremental_df)} historical trades)")
+        log(f"📊 Processing {len(incremental_df)} trades since {snapshot_year}-12-31")
+        log(f"   (Skipped {len(df) - len(incremental_df)} historical trades)")
     
     return df, snapshot_df, snapshot_year, incremental_df, cash_flows, cash_flow_dates
 
@@ -286,42 +294,42 @@ def get_market_data(df, currently_held_tickers):
             not_available.append(ticker)
     
     # Detailed logging of price sources
-    print()
-    print("📊 PRICE SOURCE SUMMARY")
-    print("-" * 70)
+    log("")
+    log("📊 PRICE SOURCE SUMMARY")
+    log("-" * 70)
     
     total_tickers = len(currently_held_tickers)
     
     if yahoo_success:
-        print(f"✅ Yahoo Finance: {len(yahoo_success)}/{total_tickers} tickers")
+        log(f"✅ Yahoo Finance: {len(yahoo_success)}/{total_tickers} tickers")
         for ticker in yahoo_success[:5]:  # Show first 5
-            print(f"   • {ticker}")
+            log(f"   • {ticker}")
         if len(yahoo_success) > 5:
-            print(f"   ... and {len(yahoo_success) - 5} more")
+            log(f"   ... and {len(yahoo_success) - 5} more")
     
     if nse_success:
-        print(f"✅ NSE API (SGBs): {len(nse_success)}/{total_tickers} tickers")
+        log(f"✅ NSE API (SGBs): {len(nse_success)}/{total_tickers} tickers")
         for ticker in nse_success:
-            print(f"   • {ticker}")
+            log(f"   • {ticker}")
     
     if cached_used:
-        print(f"💾 Cached (archivesCSV/backupPrices.csv): {len(cached_used)}/{total_tickers} tickers")
+        log(f"💾 Cached (archivesCSV/backupPrices.csv): {len(cached_used)}/{total_tickers} tickers")
         for ticker in cached_used[:5]:  # Show first 5
-            print(f"   • {ticker}")
+            log(f"   • {ticker}")
         if len(cached_used) > 5:
-            print(f"   ... and {len(cached_used) - 5} more")
+            log(f"   ... and {len(cached_used) - 5} more")
     
     if not_available:
-        print(f"❌ Not Available: {len(not_available)}/{total_tickers} tickers")
+        log(f"❌ Not Available: {len(not_available)}/{total_tickers} tickers")
         for ticker in not_available:
-            print(f"   • {ticker}")
+            log(f"   • {ticker}")
     
     yahoo_failures = len(cached_used) + len(not_available)
     if yahoo_failures > 3:
-        print(f"⚠️  Yahoo Finance rate limit hit {yahoo_failures} times")
+        log(f"⚠️  Yahoo Finance rate limit hit {yahoo_failures} times")
     
-    print("-" * 70)
-    print()
+    log("-" * 70)
+    log("")
     
     return market_data, company_names, previous_close_data
 
@@ -564,7 +572,7 @@ def calculate_portfolio_summary(df=None):
             cash_flows.append(current_value_inr)
             cash_flow_dates.append(date.today())
         else:
-            print(f"⚠️  Current portfolio value is 0 - cannot calculate XIRR without end value")
+            log(f"⚠️  Current portfolio value is 0 - cannot calculate XIRR without end value")
         
         # Calculate XIRR
         try:
@@ -572,20 +580,21 @@ def calculate_portfolio_summary(df=None):
                 portfolio_xirr = xirr(cash_flow_dates, cash_flows)
                 if portfolio_xirr and portfolio_xirr != 0:
                     xirr_percentage = portfolio_xirr * 100
-                    print(f"📈 XIRR calculated: {xirr_percentage:.2f}% (from {len(cash_flows)-1} transactions)")
+                    log(f"📈 XIRR calculated: {xirr_percentage:.2f}% (from {len(cash_flows)-1} transactions)")
                 else:
-                    print(f"⚠️ XIRR calculation returned {portfolio_xirr}")
+                    log(f"⚠️ XIRR calculation returned {portfolio_xirr}")
                     xirr_percentage = 0
             else:
                 if current_value_inr <= 0:
-                    print(f"⚠️ Cannot calculate XIRR: current portfolio value is 0")
+                    log(f"⚠️ Cannot calculate XIRR: current portfolio value is 0")
                 else:
-                    print(f"⚠️ Insufficient cash flows for XIRR: {len(cash_flows)} flows, {len(cash_flow_dates)} dates")
+                    log(f"⚠️ Insufficient cash flows for XIRR: {len(cash_flows)} flows, {len(cash_flow_dates)} dates")
                 xirr_percentage = 0
         except Exception as e:
-            print(f"⚠️ XIRR calculation error: {str(e)}")
+            log(f"⚠️ XIRR calculation error: {str(e)}")
             import traceback
-            traceback.print_exc()
+            if ENABLE_LOGGING:
+                traceback.print_exc()
             xirr_percentage = 0
         
         # Calculate daily change
@@ -609,7 +618,7 @@ def calculate_portfolio_summary(df=None):
         }
         
     except Exception as e:
-        print(f"❌ Error calculating portfolio summary: {str(e)}")
+        log(f"❌ Error calculating portfolio summary: {str(e)}")
         return None
 
 
@@ -707,20 +716,20 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
             
             total_realized_profit = total_realized_profit_from_holdings + realized_profit_from_fully_sold
             
-            print(f"💰 Realized Profit Breakdown:")
-            print(f"   From holdings (snapshot): ₹{total_realized_profit_from_holdings:,.2f}")
-            print(f"   From fully sold: ₹{realized_profit_from_fully_sold:,.2f}")
-            print(f"   Total: ₹{total_realized_profit:,.2f}")
+            log(f"💰 Realized Profit Breakdown:")
+            log(f"   From holdings (snapshot): ₹{total_realized_profit_from_holdings:,.2f}")
+            log(f"   From fully sold: ₹{realized_profit_from_fully_sold:,.2f}")
+            log(f"   Total: ₹{total_realized_profit:,.2f}")
             
             # Use cash flows from snapshot if available
             if snapshot_cash_flows and snapshot_cash_flow_dates:
-                print("💰 Using cached cash flows from snapshot for XIRR")
+                log("💰 Using cached cash flows from snapshot for XIRR")
                 cash_flows = list(snapshot_cash_flows)
                 cash_flow_dates = list(snapshot_cash_flow_dates)
-                print(f"   Snapshot cash flows: {len(cash_flows)} transactions")
-                print(f"   Date range: {min(cash_flow_dates)} to {max(cash_flow_dates)}")
-                print(f"   Total cash out (investments): ₹{sum(cf for cf in cash_flows if cf < 0):,.2f}")
-                print(f"   Total cash in (returns): ₹{sum(cf for cf in cash_flows if cf > 0):,.2f}")
+                log(f"   Snapshot cash flows: {len(cash_flows)} transactions")
+                log(f"   Date range: {min(cash_flow_dates)} to {max(cash_flow_dates)}")
+                log(f"   Total cash out (investments): ₹{sum(cf for cf in cash_flows if cf < 0):,.2f}")
+                log(f"   Total cash in (returns): ₹{sum(cf for cf in cash_flows if cf > 0):,.2f}")
                 
                 # Add incremental cash flows (trades after snapshot)
                 incremental_count = 0
@@ -739,10 +748,10 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
                                 cash_flow_dates.append(trade['Date'].date())
                                 incremental_count += 1
                     if incremental_count > 0:
-                        print(f"   Added {incremental_count} incremental cash flows")
+                        log(f"   Added {incremental_count} incremental cash flows")
             else:
                 # Fallback: Calculate from full tradebook if cash flows not in snapshot
-                print("⚠️  Snapshot doesn't have cash flows - calculating from full tradebook")
+                log("⚠️  Snapshot doesn't have cash flows - calculating from full tradebook")
                 for ticker in full_df['Ticker'].unique():
                     ticker_trades = full_df[full_df['Ticker'] == ticker]
                     fx_rate = ticker_trades['Exchange_Rate'].iloc[0]
@@ -865,7 +874,7 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
             # Check if we have current price data
             if ticker not in market_data or market_data[ticker] is None:
                 # Missing price - use NaN for current values but still show the holding
-                print(f"⚠️ Skipping P/L calculation for {ticker} due to missing price data")
+                log(f"⚠️ Skipping P/L calculation for {ticker} due to missing price data")
                 portfolio_rows.append({
                     "Ticker": ticker,
                     "Name": company_names.get(ticker, ticker),
@@ -914,7 +923,7 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
             cash_flows.append(current_value_inr)
             cash_flow_dates.append(date.today())
         else:
-            print(f"⚠️  Current portfolio value is 0 - cannot calculate XIRR without end value")
+            log(f"⚠️  Current portfolio value is 0 - cannot calculate XIRR without end value")
         
         # Calculate XIRR
         try:
@@ -922,20 +931,21 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
                 portfolio_xirr = xirr(cash_flow_dates, cash_flows)
                 if portfolio_xirr and portfolio_xirr != 0:
                     xirr_percentage = portfolio_xirr * 100
-                    print(f"📈 XIRR calculated: {xirr_percentage:.2f}% (from {len(cash_flows)-1} transactions)")
+                    log(f"📈 XIRR calculated: {xirr_percentage:.2f}% (from {len(cash_flows)-1} transactions)")
                 else:
-                    print(f"⚠️ XIRR calculation returned {portfolio_xirr}")
+                    log(f"⚠️ XIRR calculation returned {portfolio_xirr}")
                     xirr_percentage = 0
             else:
                 if current_value_inr <= 0:
-                    print(f"⚠️ Cannot calculate XIRR: current portfolio value is 0")
+                    log(f"⚠️ Cannot calculate XIRR: current portfolio value is 0")
                 else:
-                    print(f"⚠️ Insufficient cash flows for XIRR: {len(cash_flows)} flows, {len(cash_flow_dates)} dates")
+                    log(f"⚠️ Insufficient cash flows for XIRR: {len(cash_flows)} flows, {len(cash_flow_dates)} dates")
                 xirr_percentage = 0
         except Exception as e:
-            print(f"⚠️ XIRR calculation error: {str(e)}")
+            log(f"⚠️ XIRR calculation error: {str(e)}")
             import traceback
-            traceback.print_exc()
+            if ENABLE_LOGGING:
+                traceback.print_exc()
             xirr_percentage = 0
         
         # Calculate daily change
@@ -961,9 +971,10 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
         return portfolio_rows, summary_metrics, full_df
         
     except Exception as e:
-        print(f"❌ Error calculating detailed portfolio: {str(e)}")
+        log(f"❌ Error calculating detailed portfolio: {str(e)}")
         import traceback
-        traceback.print_exc()
+        if ENABLE_LOGGING:
+            traceback.print_exc()
         return [], None, None
 
 
@@ -995,219 +1006,3 @@ def format_summary_message(summary):
 _Updated: {date.today().strftime('%d %B %Y')}_
 """
     return message
-
-
-def calculate_xirr_per_year(snapshot_dir='archivesCSV'):
-    """
-    Calculate CUMULATIVE XIRR up to each year-end using snapshot cash flows
-    
-    This shows how your portfolio performed from inception up to the end of each year,
-    NOT the isolated return for that year alone.
-    
-    Args:
-        snapshot_dir: Directory containing snapshot files
-    
-    Returns:
-        List of dictionaries with year and cumulative XIRR data, sorted by year
-        Example: [
-            {'year': 2022, 'xirr': 8.5, 'cash_flows_count': 25, 'total_invested': 1500000},
-            {'year': 2023, 'xirr': 12.2, 'cash_flows_count': 2467, 'total_invested': 5000000}
-        ]
-    """
-    import json
-    
-    # Find all cashflows snapshot files
-    cashflows_pattern = os.path.join(snapshot_dir, 'cashflows_snapshot_*.json')
-    cashflows_files = glob.glob(cashflows_pattern)
-    
-    if not cashflows_files:
-        print("⚠️  No cash flow snapshot files found")
-        print("   💡 Tip: Run 'python3 generate_snapshots.py' to generate snapshots")
-        return []
-    
-    yearly_xirr_data = []
-    
-    for cashflows_file in sorted(cashflows_files):
-        try:
-            # Extract year from filename
-            year = int(cashflows_file.split('_')[-1].replace('.json', ''))
-            
-            # Load cash flows (these contain ALL cash flows from inception to year-end)
-            with open(cashflows_file, 'r') as f:
-                data = json.load(f)
-                cash_flows = data.get('cash_flows', [])
-                cash_flow_dates_str = data.get('cash_flow_dates', [])
-                trade_count = data.get('trade_count', len(cash_flows))
-            
-            if not cash_flows or not cash_flow_dates_str:
-                print(f"⚠️  No cash flows found for year {year}")
-                continue
-            
-            # Convert date strings to date objects
-            cash_flow_dates = [datetime.strptime(d, '%Y-%m-%d').date() for d in cash_flow_dates_str]
-            
-            # Load the corresponding holdings snapshot to get year-end value
-            holdings_file = os.path.join(snapshot_dir, f'holdings_snapshot_{year}.csv')
-            
-            if not os.path.exists(holdings_file):
-                print(f"⚠️  Holdings snapshot not found for year {year}")
-                continue
-            
-            # Calculate year-end portfolio value using market prices
-            snapshot_df = pd.read_csv(holdings_file)
-            
-            # Use Year_End_Price if available (market value), fallback to Total_Invested_INR (book value)
-            year_end_value = 0
-            holdings_with_prices = 0
-            holdings_without_prices = 0
-            
-            for _, row in snapshot_df.iterrows():
-                qty = row['Qty']
-                exchange_rate = row.get('Exchange_Rate', 1.0)
-                
-                # Try to use Year_End_Price first (market value)
-                if pd.notna(row.get('Year_End_Price')) and row.get('Year_End_Price', 0) > 0:
-                    year_end_price = row['Year_End_Price']
-                    market_value_inr = qty * year_end_price * exchange_rate
-                    year_end_value += market_value_inr
-                    holdings_with_prices += 1
-                else:
-                    # Fallback to book value if price not available
-                    book_value = row.get('Total_Invested_INR', 0)
-                    year_end_value += book_value
-                    holdings_without_prices += 1
-            
-            if holdings_without_prices > 0:
-                print(f"   ⚠️  {holdings_without_prices}/{len(snapshot_df)} holdings missing Year_End_Price (using book value)")
-            else:
-                print(f"   ✅ All {holdings_with_prices} holdings have Year_End_Price (using market value)")
-            
-            # Calculate cumulative metrics
-            total_invested = abs(sum(cf for cf in cash_flows if cf < 0))
-            total_returns = sum(cf for cf in cash_flows if cf > 0)
-            
-            # Create copy for XIRR calculation
-            cumulative_cash_flows = cash_flows.copy()
-            cumulative_dates = cash_flow_dates.copy()
-            
-            # Add year-end portfolio value as final cash flow
-            if year_end_value > 0:
-                cumulative_cash_flows.append(year_end_value)
-                cumulative_dates.append(date(year, 12, 31))
-            
-            # Calculate CUMULATIVE XIRR from inception to this year-end
-            try:
-                year_xirr = xirr(cumulative_dates, cumulative_cash_flows)
-                xirr_percentage = year_xirr * 100 if year_xirr else 0
-            except Exception as e:
-                print(f"⚠️  Could not calculate XIRR for year {year}: {e}")
-                xirr_percentage = 0
-            
-            # Calculate date range for display
-            first_date = min(cash_flow_dates) if cash_flow_dates else date(year, 1, 1)
-            
-            yearly_xirr_data.append({
-                'year': year,
-                'xirr': round(xirr_percentage, 2),
-                'cash_flows_count': trade_count,
-                'total_invested': round(total_invested, 2),
-                'total_returns': round(total_returns, 2),
-                'year_end_value': round(year_end_value, 2),
-                'holdings_count': len(snapshot_df),
-                'first_investment_date': first_date.strftime('%Y-%m-%d'),
-                'period_days': (date(year, 12, 31) - first_date).days
-            })
-            
-            print(f"✅ Year {year}: Cumulative XIRR = {xirr_percentage:.2f}% (from {first_date} to {year}-12-31)")
-            
-        except Exception as e:
-            print(f"❌ Error processing year {year}: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
-    
-    # Sort by year
-    yearly_xirr_data.sort(key=lambda x: x['year'])
-    
-    return yearly_xirr_data
-
-
-def format_yearly_xirr_report(yearly_data):
-    """
-    Format yearly XIRR data into a readable report
-    
-    Args:
-        yearly_data: List of dictionaries from calculate_xirr_per_year()
-    
-    Returns:
-        Formatted string report
-    """
-    if not yearly_data:
-        return "No yearly XIRR data available"
-    
-    report = "\n" + "="*80 + "\n"
-    report += "📊 CUMULATIVE XIRR REPORT (From Inception to Each Year-End)\n"
-    report += "="*80 + "\n"
-    report += "Note: Each year shows cumulative return from your FIRST investment\n"
-    report += "      up to that year-end, NOT the isolated return for that year.\n"
-    report += "="*80 + "\n\n"
-    
-    for year_data in yearly_data:
-        year = year_data['year']
-        xirr_val = year_data['xirr']
-        invested = year_data['total_invested']
-        returns = year_data['total_returns']
-        year_end = year_data['year_end_value']
-        trades = year_data['cash_flows_count']
-        holdings = year_data['holdings_count']
-        first_date = year_data.get('first_investment_date', 'N/A')
-        period_days = year_data.get('period_days', 0)
-        period_years = period_days / 365.25
-        
-        # Emoji for performance
-        if xirr_val >= 20:
-            emoji = "🚀"
-        elif xirr_val >= 15:
-            emoji = "📈"
-        elif xirr_val >= 10:
-            emoji = "✅"
-        elif xirr_val >= 0:
-            emoji = "➡️"
-        else:
-            emoji = "📉"
-        
-        report += f"{emoji} As of Dec 31, {year} (Period: {period_years:.1f} years from {first_date})\n"
-        report += f"   Cumulative XIRR: {xirr_val:>8.2f}%\n"
-        report += f"   Total Invested:   ₹{format_indian_number(invested):>15}\n"
-        report += f"   Total Returns:    ₹{format_indian_number(returns):>15}\n"
-        report += f"   Portfolio Value:  ₹{format_indian_number(year_end):>15}\n"
-        report += f"   Transactions: {trades:>4}  |  Holdings: {holdings:>3}\n"
-        report += "-"*80 + "\n"
-    
-    # Show year-over-year XIRR changes
-    if len(yearly_data) > 1:
-        report += "\n📊 YEAR-OVER-YEAR XIRR CHANGES\n"
-        report += "-"*80 + "\n"
-        for i in range(1, len(yearly_data)):
-            prev = yearly_data[i-1]
-            curr = yearly_data[i]
-            xirr_change = curr['xirr'] - prev['xirr']
-            change_emoji = "📈" if xirr_change >= 0 else "📉"
-            sign = "+" if xirr_change >= 0 else ""
-            report += f"   {prev['year']} → {curr['year']}: {change_emoji} {sign}{xirr_change:.2f}% "
-            report += f"(from {prev['xirr']:.2f}% to {curr['xirr']:.2f}%)\n"
-        report += "-"*80 + "\n"
-    
-    # Calculate statistics
-    latest = yearly_data[-1]
-    earliest = yearly_data[0]
-    
-    report += "\n📈 SUMMARY\n"
-    report += f"   Current XIRR: {latest['xirr']:.2f}%\n"
-    report += f"   Starting XIRR ({earliest['year']}): {earliest['xirr']:.2f}%\n"
-    if len(yearly_data) > 1:
-        xirr_improvement = latest['xirr'] - earliest['xirr']
-        report += f"   Overall Improvement: {xirr_improvement:+.2f}%\n"
-    report += "="*80 + "\n"
-    
-    return report
