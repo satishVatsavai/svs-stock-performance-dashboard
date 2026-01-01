@@ -39,3 +39,7 @@ Thumbs.db
 
 # Environment variables
 .env
+
+# Logs
+notifier.log
+*.log

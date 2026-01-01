@@ -1,7 +1,16 @@
 import streamlit as st
 import pandas as pd
+import os
 from datetime import date
 from portfolio_calculator import calculate_detailed_portfolio, format_indian_number
+
+# Check if logging is enabled via environment variable
+ENABLE_LOGGING = os.environ.get('ENABLE_LOGGING', 'false').lower() in ('true', '1', 'yes')
+
+def log(message):
+    """Print message only if logging is enabled"""
+    if ENABLE_LOGGING:
+        print(message)
 
 def nse_get_advances_declines(*args, **kwargs):
     """Stub for `nse_get_advances_declines` to avoid importing heavy
@@ -12,7 +21,7 @@ def nse_get_advances_declines(*args, **kwargs):
     environments. If full functionality is required, install `nsepython`
     in the project's environment and restart the app.
     """
-    print("⚠️ nsepython not available at import time: nse_get_advances_declines stub called")
+    log("⚠️ nsepython not available at import time: nse_get_advances_declines stub called")
     return None
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes (300 seconds)

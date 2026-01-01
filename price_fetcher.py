@@ -25,6 +25,14 @@ warnings.filterwarnings('ignore', category=DeprecationWarning)
 # Suppress yfinance logger messages
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
+# Check if logging is enabled via environment variable
+ENABLE_LOGGING = os.environ.get('ENABLE_LOGGING', 'false').lower() in ('true', '1', 'yes')
+
+def log(message):
+    """Print message only if logging is enabled"""
+    if ENABLE_LOGGING:
+        print(message)
+
 # Default backup prices file path
 BACKUP_PRICES_FILE = 'archivesCSV/backupPrices.csv'
 
@@ -87,13 +95,13 @@ def load_backup_prices(backup_csv_path=BACKUP_PRICES_FILE):
                     current_prices[ticker] = price
                     prev_prices[ticker] = price  # Same as current (no daily change data)
         else:
-            print(f"⚠️ Unrecognized format in {backup_csv_path}")
+            log(f"⚠️ Unrecognized format in {backup_csv_path}")
             return {}, {}
         
-        print(f"📋 Loaded {len(current_prices)} prices from {backup_csv_path}")
+        log(f"📋 Loaded {len(current_prices)} prices from {backup_csv_path}")
         return current_prices, prev_prices
     except Exception as e:
-        print(f"⚠️ Could not load backup prices from {backup_csv_path}: {e}")
+        log(f"⚠️ Could not load backup prices from {backup_csv_path}: {e}")
         return {}, {}
 
 
@@ -143,7 +151,7 @@ def save_backup_prices(prices_dict, backup_csv_path=BACKUP_PRICES_FILE):
                 existing_df.to_csv(backup_csv_path, index=False)
                 
                 if updated_count > 0 or new_count > 0:
-                    print(f"💾 Backup prices: Updated {updated_count}, Added {new_count} to {backup_csv_path}")
+                    log(f"💾 Backup prices: Updated {updated_count}, Added {new_count} to {backup_csv_path}")
                 return
             
             # Old format - convert to new format
@@ -164,10 +172,9 @@ def save_backup_prices(prices_dict, backup_csv_path=BACKUP_PRICES_FILE):
             new_df = pd.DataFrame(new_records)
             new_df = new_df.sort_values(['Ticker', 'Date'], ascending=[True, False])
             new_df.to_csv(backup_csv_path, index=False)
-            print(f"💾 Created {backup_csv_path} with {len(prices_dict)} prices")
-        
+            log(f"💾 Created {backup_csv_path} with {len(prices_dict)} prices")
     except Exception as e:
-        print(f"⚠️ Could not save backup prices to {backup_csv_path}: {e}")
+        log(f"⚠️ Could not save backup prices to {backup_csv_path}: {e}")
 
 
 # ============================================================================
@@ -214,7 +221,7 @@ def fetch_price_from_yfinance(ticker, target_date=None):
                 # Get the closest date to target
                 closest_idx = hist.index[hist.index <= target_date].max() if any(hist.index <= target_date) else hist.index[0]
                 price = hist.loc[closest_idx, 'Close']
-                print(f"✅ Fetched historical price for {ticker} on {target_date.date()}: ₹{price:.2f}")
+                log(f"✅ Fetched historical price for {ticker} on {target_date.date()}: ₹{price:.2f}")
                 return float(price), 'yfinance'
             
             # If history failed, try current info as fallback
@@ -224,7 +231,7 @@ def fetch_price_from_yfinance(ticker, target_date=None):
                     info.get('previousClose'))
             
             if price:
-                print(f"💾 Using current price for {ticker} (historical not available): ₹{price:.2f}")
+                log(f"💾 Using current price for {ticker} (historical not available): ₹{price:.2f}")
                 return float(price), 'yfinance'
             
             return None, 'unavailable'
@@ -251,7 +258,7 @@ def fetch_price_from_yfinance(ticker, target_date=None):
                     prev_close = hist['Close'].iloc[-2]
         
         if price is not None:
-            print(f"✅ Fetched {ticker} from yfinance: ₹{price:.2f}")
+            log(f"✅ Fetched {ticker} from yfinance: ₹{price:.2f}")
             return float(price), company_name, float(prev_close) if prev_close else float(price)
         
         return None, company_name, None
@@ -264,7 +271,7 @@ def fetch_price_from_yfinance(ticker, target_date=None):
             return 'RATE_LIMITED', None, None
         
         if target_date is not None:
-            print(f"❌ ERROR: Could not fetch historical price for {ticker}: {e}")
+            log(f"❌ ERROR: Could not fetch historical price for {ticker}: {e}")
             return None, 'unavailable'
         return None, None, None
 
@@ -300,10 +307,10 @@ def fetch_sgb_price(ticker):
             price = data['priceInfo'].get('lastPrice') or data['priceInfo'].get('close')
             if price is not None:
                 price_f = float(price)
-                print(f"✅ Fetched {ticker} (SGB) from NSE: ₹{price_f:.2f}")
+                log(f"✅ Fetched {ticker} (SGB) from NSE: ₹{price_f:.2f}")
                 return price_f
     except Exception as e:
-        print(f"⚠️ Error fetching SGB price for {ticker} from NSE: {e}")
+        log(f"⚠️ Error fetching SGB price for {ticker} from NSE: {e}")
 
     return None
 
@@ -346,11 +353,11 @@ def fetch_price_with_fallback(ticker, is_sgb=False, backup_csv_path=BACKUP_PRICE
         else:
             # NSE fetch failed - try backup
             if ticker in backup_prices:
-                print(f"💾 Using cached price for {ticker} (SGB): ₹{backup_prices[ticker]:.2f}")
+                log(f"💾 Using cached price for {ticker} (SGB): ₹{backup_prices[ticker]:.2f}")
                 return (backup_prices[ticker], f"{ticker} (Sovereign Gold Bond)", 
                        prev_backup_prices.get(ticker, backup_prices[ticker]), 'cached')
             else:
-                print(f"❌ ERROR: Could not fetch {ticker} (SGB) from NSE and no backup price available")
+                log(f"❌ ERROR: Could not fetch {ticker} (SGB) from NSE and no backup price available")
                 return None, f"{ticker} (SGB - Price N/A)", None, 'unavailable'
     else:
         # Fetch from yfinance for regular stocks/MFs
@@ -359,11 +366,11 @@ def fetch_price_with_fallback(ticker, is_sgb=False, backup_csv_path=BACKUP_PRICE
         if price == 'RATE_LIMITED':
             # Rate limited - try backup
             if ticker in backup_prices:
-                print(f"💾 Using cached price for {ticker} (rate limited): ₹{backup_prices[ticker]:.2f}")
+                log(f"💾 Using cached price for {ticker} (rate limited): ₹{backup_prices[ticker]:.2f}")
                 return (backup_prices[ticker], ticker, 
                        prev_backup_prices.get(ticker, backup_prices[ticker]), 'cached')
             else:
-                print(f"❌ ERROR: Rate limit hit for {ticker} and no backup price available")
+                log(f"❌ ERROR: Rate limit hit for {ticker} and no backup price available")
                 return None, ticker, None, 'unavailable'
         elif price is not None:
             # Success - cache it
@@ -372,11 +379,11 @@ def fetch_price_with_fallback(ticker, is_sgb=False, backup_csv_path=BACKUP_PRICE
         else:
             # Fetch failed (not rate limit) - try backup
             if ticker in backup_prices:
-                print(f"💾 Using cached price for {ticker}: ₹{backup_prices[ticker]:.2f}")
+                log(f"💾 Using cached price for {ticker}: ₹{backup_prices[ticker]:.2f}")
                 return (backup_prices[ticker], ticker, 
                        prev_backup_prices.get(ticker, backup_prices[ticker]), 'cached')
             else:
-                print(f"❌ ERROR: Could not fetch {ticker} from yfinance and no backup price available")
+                log(f"❌ ERROR: Could not fetch {ticker} from yfinance and no backup price available")
                 return None, ticker, None, 'unavailable'
 
 
