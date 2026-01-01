@@ -1,10 +1,12 @@
 """
 Holdings Snapshot Generator
 Creates year-end snapshots of portfolio holdings for faster calculation
+Includes cash flows for XIRR calculation
 """
 import pandas as pd
 from datetime import datetime, date
 import os
+import json
 
 
 def calculate_fifo_avg_price(ticker_trades):
@@ -80,6 +82,10 @@ def generate_snapshot_for_year(df, year, output_dir='archivesCSV'):
     holdings_count = 0
     total_realized_profit = 0.0
     
+    # Collect ALL cash flows up to this year (for XIRR calculation)
+    all_cash_flows = []
+    all_cash_flow_dates = []
+    
     for ticker in ticker_list:
         ticker_trades = df_filtered[df_filtered['Ticker'] == ticker]
         
@@ -88,15 +94,26 @@ def generate_snapshot_for_year(df, year, output_dir='archivesCSV'):
         sell_qty = ticker_trades[ticker_trades['Type'] == 'SELL']['Qty'].sum()
         current_qty = buy_qty - sell_qty
         
+        # Get currency and exchange rate (use the most recent one for this ticker)
+        currency = ticker_trades['Currency'].iloc[-1]
+        fx_rate = ticker_trades['Exchange_Rate'].iloc[-1]
+        
+        # Add this ticker's cash flows to the total
+        for _, trade in ticker_trades.iterrows():
+            if trade['Type'] == 'BUY':
+                cash_flow = -(trade['Qty'] * trade['Price'] * trade['Exchange_Rate'])
+                all_cash_flows.append(cash_flow)
+                all_cash_flow_dates.append(trade['Date'].strftime('%Y-%m-%d'))
+            elif trade['Type'] == 'SELL':
+                cash_flow = trade['Qty'] * trade['Price'] * trade['Exchange_Rate']
+                all_cash_flows.append(cash_flow)
+                all_cash_flow_dates.append(trade['Date'].strftime('%Y-%m-%d'))
+        
         # Only include if there are holdings at year-end
         if current_qty < 0.001:
             continue
         
         holdings_count += 1
-        
-        # Get currency and exchange rate (use the most recent one for this ticker)
-        currency = ticker_trades['Currency'].iloc[-1]
-        fx_rate = ticker_trades['Exchange_Rate'].iloc[-1]
         
         # Calculate FIFO average buy price of remaining holdings
         avg_buy_price = calculate_fifo_avg_price(ticker_trades)
@@ -171,13 +188,28 @@ def generate_snapshot_for_year(df, year, output_dir='archivesCSV'):
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
-    # Save to CSV
+    # Save holdings to CSV
     output_file = os.path.join(output_dir, f'holdings_snapshot_{year}.csv')
     snapshot_df.to_csv(output_file, index=False)
     
+    # Save cash flows to separate JSON file (for XIRR calculation)
+    cash_flows_file = os.path.join(output_dir, f'cashflows_snapshot_{year}.json')
+    cash_flows_data = {
+        'year': year,
+        'cutoff_date': f'{year}-12-31',
+        'cash_flows': all_cash_flows,
+        'cash_flow_dates': all_cash_flow_dates,
+        'trade_count': len(df_filtered)
+    }
+    
+    with open(cash_flows_file, 'w') as f:
+        json.dump(cash_flows_data, f, indent=2)
+    
     print(f"✅ Snapshot created: {output_file}")
+    print(f"   Cash flows saved: {cash_flows_file}")
     print(f"   Holdings: {holdings_count} tickers")
-    print(f"   Total Invested: ₹{invested_amt_inr:,.2f}")
+    print(f"   Cash flows: {len(all_cash_flows)} transactions")
+    print(f"   Total Invested: ₹{snapshot_df['Total_Invested_INR'].sum():,.2f}")
     print(f"   Total Realized Profit: ₹{total_realized_profit:,.2f}")
     print()
     
