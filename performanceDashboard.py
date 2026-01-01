@@ -139,6 +139,7 @@ try:
         with col1:
             if st.button("⬅️ Previous") and st.session_state.page_number > 1:
                 st.session_state.page_number -= 1
+                st.rerun()
         
         with col2:
             st.markdown(f"<h4 style='text-align: center;'>Page {st.session_state.page_number} of {total_pages}</h4>", unsafe_allow_html=True)
@@ -146,6 +147,7 @@ try:
         with col3:
             if st.button("Next ➡️") and st.session_state.page_number < total_pages:
                 st.session_state.page_number += 1
+                st.rerun()
         
         with col4:
             jump_to_page = st.number_input(
