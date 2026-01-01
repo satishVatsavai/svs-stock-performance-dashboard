@@ -7,9 +7,14 @@ import pandas as pd
 from datetime import datetime, date
 import os
 import json
-import yfinance as yf
+import sys
 import warnings
 import time
+
+# Add parent directory to path to import price_fetcher
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from price_fetcher import fetch_historical_price, fetch_sgb_price
 
 # Suppress warnings
 warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
@@ -18,28 +23,16 @@ warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 
 def get_sgb_price_at_date(ticker, target_date):
-    """Fetch SGB price from NSE (current price as approximation)"""
-    try:
-        import requests
-        url = f"https://www.nseindia.com/api/quote-equity?symbol={ticker}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-            "Accept": "application/json"
-        }
-        sess = requests.Session()
-        resp = sess.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data and 'priceInfo' in data:
-            price = data['priceInfo'].get('lastPrice') or data['priceInfo'].get('close')
-            if price:
-                return float(price)
-    except Exception:
-        pass
-    return None
+    """
+    Fetch SGB price from NSE (current price as approximation)
+    
+    DEPRECATED: Use price_fetcher.fetch_historical_price() instead
+    This function is kept for backward compatibility.
+    """
+    return fetch_sgb_price(ticker)
 
 
-def get_historical_price(ticker, target_date, currency='INR'):
+def get_historical_price(ticker, target_date, currency='INR', is_sgb=False):
     """
     Fetch historical price for a ticker at a specific date
     
@@ -47,44 +40,13 @@ def get_historical_price(ticker, target_date, currency='INR'):
         ticker: Stock ticker symbol
         target_date: Date to fetch price for (datetime or string)
         currency: Currency of the ticker
+        is_sgb: Whether this is a Sovereign Gold Bond
     
     Returns:
         Price as float, or None if unavailable
     """
-    try:
-        # Convert target_date to datetime if it's a string
-        if isinstance(target_date, str):
-            target_date = pd.to_datetime(target_date)
-        
-        # For year-end snapshots, fetch a range around that date
-        start_date = target_date - pd.Timedelta(days=7)
-        end_date = target_date + pd.Timedelta(days=7)
-        
-        # Try yfinance
-        stock = yf.Ticker(ticker)
-        hist = stock.history(start=start_date, end=end_date)
-        
-        if not hist.empty:
-            # Get the closest date to target
-            closest_idx = hist.index[hist.index <= target_date].max() if any(hist.index <= target_date) else hist.index[0]
-            price = hist.loc[closest_idx, 'Close']
-            return float(price)
-        
-        # If history failed, try current info as fallback
-        info = stock.info
-        price = (info.get('currentPrice') or 
-                info.get('regularMarketPrice') or 
-                info.get('previousClose'))
-        
-        if price:
-            return float(price)
-            
-    except Exception as e:
-        error_str = str(e)
-        if '429' not in error_str and 'Too Many Requests' not in error_str:
-            pass  # Silently ignore non-rate-limit errors
-    
-    return None
+    price, source = fetch_historical_price(ticker, target_date, is_sgb)
+    return price
 
 
 def calculate_fifo_avg_price(ticker_trades):
@@ -250,7 +212,7 @@ def generate_snapshot_for_year(df, year, output_dir='archivesCSV'):
             year_end_price = get_sgb_price_at_date(ticker, cutoff_date)
         else:
             # For equities, fetch historical price
-            year_end_price = get_historical_price(ticker, cutoff_date, currency)
+            year_end_price = get_historical_price(ticker, cutoff_date, currency, is_sgb)
         
         snapshot_data.append({
             'Ticker': ticker,

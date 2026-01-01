@@ -2,8 +2,6 @@
 Portfolio Summary Calculator Module
 Extracts portfolio calculation logic for reuse in dashboard and Telegram notifications
 """
-# YFINANCE IMPORT COMMENTED OUT TO AVOID RATE LIMITS - USING CACHED PRICES ONLY
-# import yfinance as yf
 import warnings
 import logging
 # Suppress urllib3 SSL warning for macOS with LibreSSL
@@ -23,6 +21,14 @@ import os
 import requests
 from dotenv import load_dotenv
 import time
+
+# Import price fetching functions from centralized module
+from price_fetcher import (
+    fetch_price_with_fallback,
+    load_backup_prices,
+    save_backup_prices,
+    fetch_sgb_price
+)
 
 # Load environment variables
 load_dotenv()
@@ -46,35 +52,6 @@ def format_indian_number(number):
         result = remaining + result
     
     return result + "," + last_three
-
-
-def get_sgb_price(ticker):
-    """Fetch SGB price from NSE using a lightweight requests call."""
-    try:
-        url = f"https://www.nseindia.com/api/quote-equity?symbol={ticker}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-        }
-
-        sess = requests.Session()
-        resp = sess.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-
-        data = resp.json()
-        if data and isinstance(data, dict) and 'priceInfo' in data:
-            price = data['priceInfo'].get('lastPrice') or data['priceInfo'].get('close')
-            if price is not None:
-                try:
-                    price_f = float(price)
-                    return price_f
-                except Exception:
-                    return None
-    except Exception as e:
-        print(f"⚠️ Error fetching SGB price for {ticker} from NSE via requests: {e}")
-
-    return None
 
 
 def get_exchange_rate(currency, trade_date):
@@ -268,268 +245,45 @@ def get_currently_held_tickers(df):
     return currently_held_tickers
 
 
-def load_temp_prices(temp_csv_path='archivesCSV/backupPrices.csv'):
-    """
-    Load prices from backup CSV file as fallback when Yahoo Finance has rate limits
-    Supports both old format (Ticker, Current Price) and new format (Ticker, Date, Closing Price)
-    
-    Returns:
-        Dictionary with ticker as key and price as value
-        Example: {'AAPL': 150.0, 'SGBSEP29VI': 14599.0}
-    """
-    if not os.path.exists(temp_csv_path):
-        return {}
-    
-    try:
-        temp_df = pd.read_csv(temp_csv_path)
-        temp_prices = {}
-        
-        # Check which format we're dealing with
-        if 'Closing Price' in temp_df.columns:
-            # New format: Ticker, Date, Closing Price
-            # Get the most recent price for each ticker (sorted by date)
-            for ticker in temp_df['Ticker'].unique():
-                ticker_rows = temp_df[temp_df['Ticker'] == ticker]
-                # Get rows with valid prices
-                valid_prices = ticker_rows[ticker_rows['Closing Price'].notna()]
-                if not valid_prices.empty:
-                    # Sort by date (most recent first) and get the first price
-                    if 'Date' in valid_prices.columns:
-                        valid_prices = valid_prices.sort_values('Date', ascending=False)
-                    price = float(valid_prices.iloc[0]['Closing Price'])
-                    temp_prices[ticker] = price
-        
-        elif 'Current Price' in temp_df.columns:
-            # Old format: Ticker, Current Price
-            for _, row in temp_df.iterrows():
-                ticker = row['Ticker']
-                price = float(row['Current Price']) if pd.notna(row['Current Price']) else None
-                if price is not None:
-                    temp_prices[ticker] = price
-        else:
-            print(f"⚠️ Unrecognized format in {temp_csv_path}")
-            return {}
-        
-        print(f"📋 Loaded {len(temp_prices)} prices from {temp_csv_path}")
-        return temp_prices
-    except Exception as e:
-        print(f"⚠️ Could not load backup prices from {temp_csv_path}: {e}")
-        return {}
-
-
-def save_temp_prices(prices_dict, temp_csv_path='archivesCSV/backupPrices.csv'):
-    """
-    Save/update prices to backup CSV file
-    Maintains new format (Ticker, Date, Closing Price) if it exists, 
-    otherwise creates old format (Ticker, Current Price)
-    
-    Args:
-        prices_dict: Dictionary with ticker as key and price as value
-        temp_csv_path: Path to the CSV file
-    """
-    try:
-        # Load existing prices
-        if os.path.exists(temp_csv_path):
-            existing_df = pd.read_csv(temp_csv_path)
-            
-            # Check format
-            if 'Closing Price' in existing_df.columns and 'Date' in existing_df.columns:
-                # New format - append with current date
-                from datetime import date
-                current_date = date.today().strftime('%Y-%m-%d')
-                
-                # Create new records
-                new_records = []
-                for ticker, price in prices_dict.items():
-                    new_records.append({
-                        'Ticker': ticker,
-                        'Date': current_date,
-                        'Closing Price': price
-                    })
-                
-                if new_records:
-                    new_df = pd.DataFrame(new_records)
-                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-                    # Sort by Ticker and Date
-                    combined_df = combined_df.sort_values(['Ticker', 'Date'], ascending=[True, False])
-                    combined_df.to_csv(temp_csv_path, index=False)
-                    print(f"💾 Saved {len(prices_dict)} new/updated prices to {temp_csv_path}")
-                    return
-            
-            # Old format
-            existing_prices = dict(zip(existing_df['Ticker'], existing_df.get('Current Price', [])))
-        else:
-            existing_prices = {}
-        
-        # Update with new prices (old format)
-        existing_prices.update(prices_dict)
-        
-        # Create DataFrame and save
-        new_df = pd.DataFrame([
-            {'Ticker': ticker, 'Current Price': price}
-            for ticker, price in sorted(existing_prices.items())
-        ])
-        
-        new_df.to_csv(temp_csv_path, index=False)
-        print(f"💾 Saved {len(prices_dict)} new/updated prices to {temp_csv_path}")
-        
-    except Exception as e:
-        print(f"⚠️ Could not save temp prices to {temp_csv_path}: {e}")
-
-
-def fetch_price_from_yfinance(ticker):
-    """
-    Fetch current price from Yahoo Finance for a ticker
-    
-    Args:
-        ticker: Stock ticker symbol
-        
-    Returns:
-        Tuple of (price, company_name, previous_close) if successful, (None, None, None) otherwise
-    """
-    try:
-        import yfinance as yf
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        
-        company_name = (info.get('longName') or 
-                      info.get('shortName') or 
-                      ticker)
-        
-        price = (info.get('currentPrice') or 
-                info.get('regularMarketPrice') or 
-                info.get('previousClose') or
-                info.get('regularMarketPreviousClose'))
-        
-        prev_close = info.get('regularMarketPreviousClose') or info.get('previousClose')
-        
-        if price is None:
-            hist = stock.history(period="1mo")
-            if not hist.empty:
-                price = hist['Close'].iloc[-1]
-                if len(hist) >= 2:
-                    prev_close = hist['Close'].iloc[-2]
-        
-        if price is not None:
-            return float(price), company_name, float(prev_close) if prev_close else float(price)
-        
-        return None, company_name, None
-        
-    except Exception as e:
-        error_str = str(e)
-        if '429' in error_str or 'Too Many Requests' in error_str:
-            return 'RATE_LIMITED', None, None
-        return None, None, None
-
-
 def get_market_data(df, currently_held_tickers):
     """Fetch current market prices for held tickers and cache them in archivesCSV/backupPrices.csv"""
     market_data = {}
     company_names = {}
     previous_close_data = {}
     
-    # Load temp prices as fallback
-    temp_prices = load_temp_prices()
-    use_temp_fallback = len(temp_prices) > 0
-    
-    # Track newly fetched prices to save
-    newly_fetched_prices = {}
+    # Load backup prices as fallback
+    backup_prices, prev_backup_prices = load_backup_prices()
     
     # Track price sources for logging
     yahoo_success = []
     nse_success = []
-    temp_fallback_used = []
+    cached_used = []
     not_available = []
-    
-    yahoo_failures = 0
     
     for ticker in currently_held_tickers:
         is_sgb = df[df['Ticker'] == ticker]['Is_SGB'].iloc[0] if 'Is_SGB' in df.columns else False
         
-        if is_sgb:
-            try:
-                price = get_sgb_price(ticker)
-                if price:
-                    market_data[ticker] = price
-                    company_names[ticker] = f"{ticker} (Sovereign Gold Bond)"
-                    newly_fetched_prices[ticker] = price  # Save fetched SGB price
-                    nse_success.append(ticker)
-                else:
-                    # Try temp prices first before tradebook fallback
-                    if ticker in temp_prices:
-                        market_data[ticker] = temp_prices[ticker]
-                        company_names[ticker] = f"{ticker} (Sovereign Gold Bond)"
-                        temp_fallback_used.append(ticker)
-                    else:
-                        try:
-                            recent_price = df[df['Ticker'] == ticker]['Price'].dropna().iloc[-1]
-                            market_data[ticker] = float(recent_price)
-                            company_names[ticker] = f"{ticker} (SGB - fallback)"
-                            temp_fallback_used.append(f"{ticker} (tradebook)")
-                        except Exception:
-                            market_data[ticker] = None
-                            company_names[ticker] = f"{ticker} (SGB - Price N/A)"
-                            not_available.append(ticker)
-            except Exception as e:
-                print(f"⚠️ Error fetching SGB {ticker}: {str(e)}")
-                # Try temp prices
-                if ticker in temp_prices:
-                    market_data[ticker] = temp_prices[ticker]
-                    company_names[ticker] = f"{ticker} (Sovereign Gold Bond)"
-                    temp_fallback_used.append(ticker)
-                else:
-                    market_data[ticker] = None
-                    company_names[ticker] = f"{ticker} (SGB - Error)"
-                    not_available.append(ticker)
-        else:
-            # Try Yahoo Finance for current holdings (ENABLED for dashboard live prices)
-            price_fetched = False
+        # Use the new unified price fetching function
+        price, company_name, prev_close, source = fetch_price_with_fallback(ticker, is_sgb)
+        
+        if price is not None:
+            market_data[ticker] = price
+            company_names[ticker] = company_name
+            previous_close_data[ticker] = prev_close
             
-            # YFINANCE FETCHING - Enabled for current holdings dashboard
-            price, company_name, prev_close = fetch_price_from_yfinance(ticker)  # ENABLED for current holdings
-            # price, company_name, prev_close = None, None, None  # Uncomment to disable
-            
-            # Debug warning when yFinance is disabled
-            if price is None and company_name is None and prev_close is None:
-                print(f"⚠️  WARNING: yFinance is DISABLED - Using fallback prices for {ticker}")
-            
-            if price == 'RATE_LIMITED':
-                # Rate limited - try temp prices fallback
-                yahoo_failures += 1
-                if ticker in temp_prices:
-                    market_data[ticker] = temp_prices[ticker]
-                    company_names[ticker] = company_names.get(ticker, ticker)
-                    previous_close_data[ticker] = temp_prices[ticker]
-                    price_fetched = True
-                    temp_fallback_used.append(ticker)
-                else:
-                    if yahoo_failures <= 3:
-                        print(f"⚠️ Rate limit hit for {ticker}, temp price not available")
-            elif price is not None:
-                # Successfully fetched from yFinance
-                market_data[ticker] = price
-                company_names[ticker] = company_name
-                previous_close_data[ticker] = prev_close
-                newly_fetched_prices[ticker] = price
+            # Track source for logging
+            if source == 'yfinance':
                 yahoo_success.append(ticker)
-                price_fetched = True
-                
-            # If we still don't have a price, try temp prices or set as NaN
-            if not price_fetched:
-                if ticker in temp_prices:
-                    market_data[ticker] = temp_prices[ticker]
-                    company_names[ticker] = company_names.get(ticker, ticker)
-                    previous_close_data[ticker] = temp_prices[ticker]
-                    temp_fallback_used.append(ticker)
-                else:
-                    market_data[ticker] = None  # Will be treated as NaN
-                    company_names[ticker] = ticker
-                    not_available.append(ticker)
-                    print(f"❌ {ticker}: Not in cache yet. Price will be fetched on next successful refresh.")
-    
-    # Save newly fetched prices to temp CSV
-    if newly_fetched_prices:
-        save_temp_prices(newly_fetched_prices)
+            elif source == 'nse':
+                nse_success.append(ticker)
+            elif source == 'cached':
+                cached_used.append(ticker)
+        else:
+            # Price not available anywhere
+            market_data[ticker] = None
+            company_names[ticker] = company_name
+            previous_close_data[ticker] = None
+            not_available.append(ticker)
     
     # Detailed logging of price sources
     print()
@@ -550,18 +304,19 @@ def get_market_data(df, currently_held_tickers):
         for ticker in nse_success:
             print(f"   • {ticker}")
     
-    if temp_fallback_used:
-        print(f"💾 Cached (archivesCSV/backupPrices.csv): {len(temp_fallback_used)}/{total_tickers} tickers")
-        for ticker in temp_fallback_used[:5]:  # Show first 5
+    if cached_used:
+        print(f"💾 Cached (archivesCSV/backupPrices.csv): {len(cached_used)}/{total_tickers} tickers")
+        for ticker in cached_used[:5]:  # Show first 5
             print(f"   • {ticker}")
-        if len(temp_fallback_used) > 5:
-            print(f"   ... and {len(temp_fallback_used) - 5} more")
+        if len(cached_used) > 5:
+            print(f"   ... and {len(cached_used) - 5} more")
     
     if not_available:
         print(f"❌ Not Available: {len(not_available)}/{total_tickers} tickers")
         for ticker in not_available:
             print(f"   • {ticker}")
     
+    yahoo_failures = len(cached_used) + len(not_available)
     if yahoo_failures > 3:
         print(f"⚠️  Yahoo Finance rate limit hit {yahoo_failures} times")
     
