@@ -1,12 +1,90 @@
 """
 Holdings Snapshot Generator
 Creates year-end snapshots of portfolio holdings for faster calculation
-Includes cash flows for XIRR calculation
+Includes cash flows for XIRR calculation and stores year-end market prices
 """
 import pandas as pd
 from datetime import datetime, date
 import os
 import json
+import yfinance as yf
+import warnings
+import time
+
+# Suppress warnings
+warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
+warnings.filterwarnings('ignore', category=FutureWarning)
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+
+
+def get_sgb_price_at_date(ticker, target_date):
+    """Fetch SGB price from NSE (current price as approximation)"""
+    try:
+        import requests
+        url = f"https://www.nseindia.com/api/quote-equity?symbol={ticker}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+            "Accept": "application/json"
+        }
+        sess = requests.Session()
+        resp = sess.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if data and 'priceInfo' in data:
+            price = data['priceInfo'].get('lastPrice') or data['priceInfo'].get('close')
+            if price:
+                return float(price)
+    except Exception:
+        pass
+    return None
+
+
+def get_historical_price(ticker, target_date, currency='INR'):
+    """
+    Fetch historical price for a ticker at a specific date
+    
+    Args:
+        ticker: Stock ticker symbol
+        target_date: Date to fetch price for (datetime or string)
+        currency: Currency of the ticker
+    
+    Returns:
+        Price as float, or None if unavailable
+    """
+    try:
+        # Convert target_date to datetime if it's a string
+        if isinstance(target_date, str):
+            target_date = pd.to_datetime(target_date)
+        
+        # For year-end snapshots, fetch a range around that date
+        start_date = target_date - pd.Timedelta(days=7)
+        end_date = target_date + pd.Timedelta(days=7)
+        
+        # Try yfinance
+        stock = yf.Ticker(ticker)
+        hist = stock.history(start=start_date, end=end_date)
+        
+        if not hist.empty:
+            # Get the closest date to target
+            closest_idx = hist.index[hist.index <= target_date].max() if any(hist.index <= target_date) else hist.index[0]
+            price = hist.loc[closest_idx, 'Close']
+            return float(price)
+        
+        # If history failed, try current info as fallback
+        info = stock.info
+        price = (info.get('currentPrice') or 
+                info.get('regularMarketPrice') or 
+                info.get('previousClose'))
+        
+        if price:
+            return float(price)
+            
+    except Exception as e:
+        error_str = str(e)
+        if '429' not in error_str and 'Too Many Requests' not in error_str:
+            pass  # Silently ignore non-rate-limit errors
+    
+    return None
 
 
 def calculate_fifo_avg_price(ticker_trades):
@@ -164,6 +242,16 @@ def generate_snapshot_for_year(df, year, output_dir='archivesCSV'):
         # Check if it's an SGB
         is_sgb = ticker_trades['Is_SGB'].iloc[-1] if 'Is_SGB' in ticker_trades.columns else False
         
+        # Fetch year-end price for the ticker
+        year_end_price = None
+        
+        if is_sgb:
+            # For SGBs, use the current price as a proxy (from NSE)
+            year_end_price = get_sgb_price_at_date(ticker, cutoff_date)
+        else:
+            # For equities, fetch historical price
+            year_end_price = get_historical_price(ticker, cutoff_date, currency)
+        
         snapshot_data.append({
             'Ticker': ticker,
             'Qty': round(current_qty, 6),
@@ -172,7 +260,8 @@ def generate_snapshot_for_year(df, year, output_dir='archivesCSV'):
             'Realized_Profit_INR': round(realized_profit, 2),
             'Currency': currency,
             'Exchange_Rate': round(fx_rate, 2),
-            'Is_SGB': is_sgb
+            'Is_SGB': is_sgb,
+            'Year_End_Price': year_end_price
         })
     
     if not snapshot_data:

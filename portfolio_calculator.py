@@ -314,11 +314,86 @@ def get_currently_held_tickers(df):
     return currently_held_tickers
 
 
+def load_temp_prices(temp_csv_path='archivesCSV/tempCurrentPrices.csv'):
+    """
+    Load prices from temporary CSV file as fallback when Yahoo Finance has rate limits
+    
+    Returns:
+        Dictionary with ticker as key and price as value
+        Example: {'AAPL': 150.0, 'SGBSEP29VI': 14599.0}
+    """
+    if not os.path.exists(temp_csv_path):
+        return {}
+    
+    try:
+        temp_df = pd.read_csv(temp_csv_path)
+        temp_prices = {}
+        
+        for _, row in temp_df.iterrows():
+            ticker = row['Ticker']
+            price = float(row['Current Price']) if pd.notna(row['Current Price']) else None
+            if price is not None:
+                temp_prices[ticker] = price
+        
+        print(f"📋 Loaded {len(temp_prices)} prices from {temp_csv_path}")
+        return temp_prices
+    except Exception as e:
+        print(f"⚠️ Could not load temp prices from {temp_csv_path}: {e}")
+        return {}
+
+
+def save_temp_prices(prices_dict, temp_csv_path='archivesCSV/tempCurrentPrices.csv'):
+    """
+    Save/update prices to temporary CSV file
+    
+    Args:
+        prices_dict: Dictionary with ticker as key and price as value
+        temp_csv_path: Path to the CSV file
+    """
+    try:
+        # Load existing prices
+        if os.path.exists(temp_csv_path):
+            existing_df = pd.read_csv(temp_csv_path)
+            existing_prices = dict(zip(existing_df['Ticker'], existing_df['Current Price']))
+        else:
+            existing_prices = {}
+        
+        # Update with new prices
+        existing_prices.update(prices_dict)
+        
+        # Create DataFrame and save
+        new_df = pd.DataFrame([
+            {'Ticker': ticker, 'Current Price': price}
+            for ticker, price in sorted(existing_prices.items())
+        ])
+        
+        new_df.to_csv(temp_csv_path, index=False)
+        print(f"💾 Saved {len(prices_dict)} new/updated prices to {temp_csv_path}")
+        
+    except Exception as e:
+        print(f"⚠️ Could not save temp prices to {temp_csv_path}: {e}")
+
+
 def get_market_data(df, currently_held_tickers):
-    """Fetch current market prices for held tickers"""
+    """Fetch current market prices for held tickers and cache them in archivesCSV/tempCurrentPrices.csv"""
     market_data = {}
     company_names = {}
     previous_close_data = {}
+    
+    # Load temp prices as fallback
+    temp_prices = load_temp_prices()
+    use_temp_fallback = len(temp_prices) > 0
+    
+    # Track newly fetched prices to save
+    newly_fetched_prices = {}
+    
+    # Track price sources for logging
+    yahoo_success = []
+    nse_success = []
+    temp_fallback_used = []
+    not_available = []
+    
+    yahoo_failures = 0
     
     for ticker in currently_held_tickers:
         is_sgb = df[df['Ticker'] == ticker]['Is_SGB'].iloc[0] if 'Is_SGB' in df.columns else False
@@ -329,19 +404,37 @@ def get_market_data(df, currently_held_tickers):
                 if price:
                     market_data[ticker] = price
                     company_names[ticker] = f"{ticker} (Sovereign Gold Bond)"
+                    newly_fetched_prices[ticker] = price  # Save fetched SGB price
+                    nse_success.append(ticker)
                 else:
-                    try:
-                        recent_price = df[df['Ticker'] == ticker]['Price'].dropna().iloc[-1]
-                        market_data[ticker] = float(recent_price)
-                        company_names[ticker] = f"{ticker} (SGB - fallback)"
-                    except Exception:
-                        market_data[ticker] = None
-                        company_names[ticker] = f"{ticker} (SGB - Price N/A)"
+                    # Try temp prices first before tradebook fallback
+                    if ticker in temp_prices:
+                        market_data[ticker] = temp_prices[ticker]
+                        company_names[ticker] = f"{ticker} (Sovereign Gold Bond)"
+                        temp_fallback_used.append(ticker)
+                    else:
+                        try:
+                            recent_price = df[df['Ticker'] == ticker]['Price'].dropna().iloc[-1]
+                            market_data[ticker] = float(recent_price)
+                            company_names[ticker] = f"{ticker} (SGB - fallback)"
+                            temp_fallback_used.append(f"{ticker} (tradebook)")
+                        except Exception:
+                            market_data[ticker] = None
+                            company_names[ticker] = f"{ticker} (SGB - Price N/A)"
+                            not_available.append(ticker)
             except Exception as e:
                 print(f"⚠️ Error fetching SGB {ticker}: {str(e)}")
-                market_data[ticker] = None
-                company_names[ticker] = f"{ticker} (SGB - Error)"
+                # Try temp prices
+                if ticker in temp_prices:
+                    market_data[ticker] = temp_prices[ticker]
+                    company_names[ticker] = f"{ticker} (Sovereign Gold Bond)"
+                    temp_fallback_used.append(ticker)
+                else:
+                    market_data[ticker] = None
+                    company_names[ticker] = f"{ticker} (SGB - Error)"
+                    not_available.append(ticker)
         else:
+            price_fetched = False
             try:
                 stock = yf.Ticker(ticker)
                 info = stock.info
@@ -365,12 +458,84 @@ def get_market_data(df, currently_held_tickers):
                         if len(hist) >= 2:
                             prev_close = hist['Close'].iloc[-2]
                 
-                market_data[ticker] = price
-                previous_close_data[ticker] = prev_close if prev_close else price
+                if price is not None:
+                    market_data[ticker] = price
+                    previous_close_data[ticker] = prev_close if prev_close else price
+                    newly_fetched_prices[ticker] = price  # Save fetched price
+                    yahoo_success.append(ticker)
+                    price_fetched = True
+                    
             except Exception as e:
-                print(f"⚠️ Could not fetch price for {ticker}: {str(e)}")
-                market_data[ticker] = None
-                company_names[ticker] = ticker
+                error_str = str(e)
+                # Check if it's a rate limit error (429)
+                if '429' in error_str or 'Too Many Requests' in error_str:
+                    yahoo_failures += 1
+                    # Try temp prices fallback
+                    if ticker in temp_prices:
+                        market_data[ticker] = temp_prices[ticker]
+                        company_names[ticker] = company_names.get(ticker, ticker)
+                        previous_close_data[ticker] = temp_prices[ticker]  # Use same price as prev close
+                        price_fetched = True
+                        temp_fallback_used.append(ticker)
+                    else:
+                        if yahoo_failures <= 3:  # Only print first few failures
+                            print(f"⚠️ Rate limit hit for {ticker}, temp price not available")
+                else:
+                    if yahoo_failures <= 3:
+                        print(f"⚠️ Could not fetch price for {ticker}: {e}")
+                
+            # If we still don't have a price, try temp prices or set as NaN
+            if not price_fetched:
+                if ticker in temp_prices:
+                    market_data[ticker] = temp_prices[ticker]
+                    company_names[ticker] = company_names.get(ticker, ticker)
+                    previous_close_data[ticker] = temp_prices[ticker]
+                    temp_fallback_used.append(ticker)
+                else:
+                    market_data[ticker] = None  # Will be treated as NaN
+                    company_names[ticker] = ticker
+                    not_available.append(ticker)
+    
+    # Save newly fetched prices to temp CSV
+    if newly_fetched_prices:
+        save_temp_prices(newly_fetched_prices)
+    
+    # Detailed logging of price sources
+    print()
+    print("📊 PRICE SOURCE SUMMARY")
+    print("-" * 70)
+    
+    total_tickers = len(currently_held_tickers)
+    
+    if yahoo_success:
+        print(f"✅ Yahoo Finance: {len(yahoo_success)}/{total_tickers} tickers")
+        for ticker in yahoo_success[:5]:  # Show first 5
+            print(f"   • {ticker}")
+        if len(yahoo_success) > 5:
+            print(f"   ... and {len(yahoo_success) - 5} more")
+    
+    if nse_success:
+        print(f"✅ NSE API (SGBs): {len(nse_success)}/{total_tickers} tickers")
+        for ticker in nse_success:
+            print(f"   • {ticker}")
+    
+    if temp_fallback_used:
+        print(f"💾 Cached (archivesCSV/tempCurrentPrices.csv): {len(temp_fallback_used)}/{total_tickers} tickers")
+        for ticker in temp_fallback_used[:5]:  # Show first 5
+            print(f"   • {ticker}")
+        if len(temp_fallback_used) > 5:
+            print(f"   ... and {len(temp_fallback_used) - 5} more")
+    
+    if not_available:
+        print(f"❌ Not Available: {len(not_available)}/{total_tickers} tickers")
+        for ticker in not_available:
+            print(f"   • {ticker}")
+    
+    if yahoo_failures > 3:
+        print(f"⚠️  Yahoo Finance rate limit hit {yahoo_failures} times")
+    
+    print("-" * 70)
+    print()
     
     return market_data, company_names, previous_close_data
 
@@ -976,3 +1141,219 @@ def format_summary_message(summary):
 _Updated: {date.today().strftime('%d %B %Y')}_
 """
     return message
+
+
+def calculate_xirr_per_year(snapshot_dir='archivesCSV'):
+    """
+    Calculate CUMULATIVE XIRR up to each year-end using snapshot cash flows
+    
+    This shows how your portfolio performed from inception up to the end of each year,
+    NOT the isolated return for that year alone.
+    
+    Args:
+        snapshot_dir: Directory containing snapshot files
+    
+    Returns:
+        List of dictionaries with year and cumulative XIRR data, sorted by year
+        Example: [
+            {'year': 2022, 'xirr': 8.5, 'cash_flows_count': 25, 'total_invested': 1500000},
+            {'year': 2023, 'xirr': 12.2, 'cash_flows_count': 2467, 'total_invested': 5000000}
+        ]
+    """
+    import json
+    
+    # Find all cashflows snapshot files
+    cashflows_pattern = os.path.join(snapshot_dir, 'cashflows_snapshot_*.json')
+    cashflows_files = glob.glob(cashflows_pattern)
+    
+    if not cashflows_files:
+        print("⚠️  No cash flow snapshot files found")
+        print("   💡 Tip: Run 'python3 generate_snapshots.py' to generate snapshots")
+        return []
+    
+    yearly_xirr_data = []
+    
+    for cashflows_file in sorted(cashflows_files):
+        try:
+            # Extract year from filename
+            year = int(cashflows_file.split('_')[-1].replace('.json', ''))
+            
+            # Load cash flows (these contain ALL cash flows from inception to year-end)
+            with open(cashflows_file, 'r') as f:
+                data = json.load(f)
+                cash_flows = data.get('cash_flows', [])
+                cash_flow_dates_str = data.get('cash_flow_dates', [])
+                trade_count = data.get('trade_count', len(cash_flows))
+            
+            if not cash_flows or not cash_flow_dates_str:
+                print(f"⚠️  No cash flows found for year {year}")
+                continue
+            
+            # Convert date strings to date objects
+            cash_flow_dates = [datetime.strptime(d, '%Y-%m-%d').date() for d in cash_flow_dates_str]
+            
+            # Load the corresponding holdings snapshot to get year-end value
+            holdings_file = os.path.join(snapshot_dir, f'holdings_snapshot_{year}.csv')
+            
+            if not os.path.exists(holdings_file):
+                print(f"⚠️  Holdings snapshot not found for year {year}")
+                continue
+            
+            # Calculate year-end portfolio value using market prices
+            snapshot_df = pd.read_csv(holdings_file)
+            
+            # Use Year_End_Price if available (market value), fallback to Total_Invested_INR (book value)
+            year_end_value = 0
+            holdings_with_prices = 0
+            holdings_without_prices = 0
+            
+            for _, row in snapshot_df.iterrows():
+                qty = row['Qty']
+                exchange_rate = row.get('Exchange_Rate', 1.0)
+                
+                # Try to use Year_End_Price first (market value)
+                if pd.notna(row.get('Year_End_Price')) and row.get('Year_End_Price', 0) > 0:
+                    year_end_price = row['Year_End_Price']
+                    market_value_inr = qty * year_end_price * exchange_rate
+                    year_end_value += market_value_inr
+                    holdings_with_prices += 1
+                else:
+                    # Fallback to book value if price not available
+                    book_value = row.get('Total_Invested_INR', 0)
+                    year_end_value += book_value
+                    holdings_without_prices += 1
+            
+            if holdings_without_prices > 0:
+                print(f"   ⚠️  {holdings_without_prices}/{len(snapshot_df)} holdings missing Year_End_Price (using book value)")
+            else:
+                print(f"   ✅ All {holdings_with_prices} holdings have Year_End_Price (using market value)")
+            
+            # Calculate cumulative metrics
+            total_invested = abs(sum(cf for cf in cash_flows if cf < 0))
+            total_returns = sum(cf for cf in cash_flows if cf > 0)
+            
+            # Create copy for XIRR calculation
+            cumulative_cash_flows = cash_flows.copy()
+            cumulative_dates = cash_flow_dates.copy()
+            
+            # Add year-end portfolio value as final cash flow
+            if year_end_value > 0:
+                cumulative_cash_flows.append(year_end_value)
+                cumulative_dates.append(date(year, 12, 31))
+            
+            # Calculate CUMULATIVE XIRR from inception to this year-end
+            try:
+                year_xirr = xirr(cumulative_dates, cumulative_cash_flows)
+                xirr_percentage = year_xirr * 100 if year_xirr else 0
+            except Exception as e:
+                print(f"⚠️  Could not calculate XIRR for year {year}: {e}")
+                xirr_percentage = 0
+            
+            # Calculate date range for display
+            first_date = min(cash_flow_dates) if cash_flow_dates else date(year, 1, 1)
+            
+            yearly_xirr_data.append({
+                'year': year,
+                'xirr': round(xirr_percentage, 2),
+                'cash_flows_count': trade_count,
+                'total_invested': round(total_invested, 2),
+                'total_returns': round(total_returns, 2),
+                'year_end_value': round(year_end_value, 2),
+                'holdings_count': len(snapshot_df),
+                'first_investment_date': first_date.strftime('%Y-%m-%d'),
+                'period_days': (date(year, 12, 31) - first_date).days
+            })
+            
+            print(f"✅ Year {year}: Cumulative XIRR = {xirr_percentage:.2f}% (from {first_date} to {year}-12-31)")
+            
+        except Exception as e:
+            print(f"❌ Error processing year {year}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    # Sort by year
+    yearly_xirr_data.sort(key=lambda x: x['year'])
+    
+    return yearly_xirr_data
+
+
+def format_yearly_xirr_report(yearly_data):
+    """
+    Format yearly XIRR data into a readable report
+    
+    Args:
+        yearly_data: List of dictionaries from calculate_xirr_per_year()
+    
+    Returns:
+        Formatted string report
+    """
+    if not yearly_data:
+        return "No yearly XIRR data available"
+    
+    report = "\n" + "="*80 + "\n"
+    report += "📊 CUMULATIVE XIRR REPORT (From Inception to Each Year-End)\n"
+    report += "="*80 + "\n"
+    report += "Note: Each year shows cumulative return from your FIRST investment\n"
+    report += "      up to that year-end, NOT the isolated return for that year.\n"
+    report += "="*80 + "\n\n"
+    
+    for year_data in yearly_data:
+        year = year_data['year']
+        xirr_val = year_data['xirr']
+        invested = year_data['total_invested']
+        returns = year_data['total_returns']
+        year_end = year_data['year_end_value']
+        trades = year_data['cash_flows_count']
+        holdings = year_data['holdings_count']
+        first_date = year_data.get('first_investment_date', 'N/A')
+        period_days = year_data.get('period_days', 0)
+        period_years = period_days / 365.25
+        
+        # Emoji for performance
+        if xirr_val >= 20:
+            emoji = "🚀"
+        elif xirr_val >= 15:
+            emoji = "📈"
+        elif xirr_val >= 10:
+            emoji = "✅"
+        elif xirr_val >= 0:
+            emoji = "➡️"
+        else:
+            emoji = "📉"
+        
+        report += f"{emoji} As of Dec 31, {year} (Period: {period_years:.1f} years from {first_date})\n"
+        report += f"   Cumulative XIRR: {xirr_val:>8.2f}%\n"
+        report += f"   Total Invested:   ₹{format_indian_number(invested):>15}\n"
+        report += f"   Total Returns:    ₹{format_indian_number(returns):>15}\n"
+        report += f"   Portfolio Value:  ₹{format_indian_number(year_end):>15}\n"
+        report += f"   Transactions: {trades:>4}  |  Holdings: {holdings:>3}\n"
+        report += "-"*80 + "\n"
+    
+    # Show year-over-year XIRR changes
+    if len(yearly_data) > 1:
+        report += "\n📊 YEAR-OVER-YEAR XIRR CHANGES\n"
+        report += "-"*80 + "\n"
+        for i in range(1, len(yearly_data)):
+            prev = yearly_data[i-1]
+            curr = yearly_data[i]
+            xirr_change = curr['xirr'] - prev['xirr']
+            change_emoji = "📈" if xirr_change >= 0 else "📉"
+            sign = "+" if xirr_change >= 0 else ""
+            report += f"   {prev['year']} → {curr['year']}: {change_emoji} {sign}{xirr_change:.2f}% "
+            report += f"(from {prev['xirr']:.2f}% to {curr['xirr']:.2f}%)\n"
+        report += "-"*80 + "\n"
+    
+    # Calculate statistics
+    latest = yearly_data[-1]
+    earliest = yearly_data[0]
+    
+    report += "\n📈 SUMMARY\n"
+    report += f"   Current XIRR: {latest['xirr']:.2f}%\n"
+    report += f"   Starting XIRR ({earliest['year']}): {earliest['xirr']:.2f}%\n"
+    if len(yearly_data) > 1:
+        xirr_improvement = latest['xirr'] - earliest['xirr']
+        report += f"   Overall Improvement: {xirr_improvement:+.2f}%\n"
+    report += "="*80 + "\n"
+    
+    return report
