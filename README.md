@@ -8,12 +8,40 @@ A comprehensive portfolio tracking system with Streamlit dashboard and Telegram 
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Build your tradebook
-python3 tradebook_builder.py consolidate
+# 2. Build your tradebook (first time or incremental)
+cd archivesCSV
+python3 ../archivesPY/tradebook_builder.py consolidate
 
-# 3. Run the dashboard
+# 3. Generate holdings snapshots (for performance optimization)
+cd ..
+python3 generate_snapshots.py
+
+# 4. Run the dashboard
 streamlit run performanceDashboard.py
 ```
+
+### ➕ Adding New Trades
+
+See **[ADDING_NEW_TRADES.md](ADDING_NEW_TRADES.md)** for the simple 3-step workflow:
+1. Add trades to your CSV file
+2. Run `consolidate` to process new trades only
+3. View updated dashboard
+
+### 🔄 Complete Rebuild (When Needed)
+
+If you need to rebuild everything from scratch:
+
+```bash
+# One command to rebuild all data
+python3 rebuild_all.py
+```
+
+This will:
+- ✅ Clean up old tradebook and snapshots
+- ✅ Rebuild tradebook from all CSV files
+- ✅ Regenerate all holdings snapshots
+- ✅ No API calls (fast, uses historical data only)
+- ✅ Source CSV files remain untouched
 
 ## ✨ Features
 
@@ -22,6 +50,7 @@ streamlit run performanceDashboard.py
 - **Holdings view**: Detailed breakdown with live prices
 - **Trade history**: Complete transaction log
 - **Multi-currency support**: Automatic USD/INR conversion
+- **⚡ Snapshot optimization**: 80-90% faster calculations using year-end snapshots
 
 ### 📱 Telegram Notifications
 - **Automated updates**: 3 times daily (customizable)
@@ -36,27 +65,32 @@ streamlit run performanceDashboard.py
 
 ## 📚 Documentation
 
-### Core Guides
+### Complete Guides
 
-- **[Dashboard Guide](DASHBOARD_GUIDE.md)** - Using the Streamlit dashboard
-  - Running locally and deploying to Streamlit Cloud
-  - Understanding metrics and calculations
-  - Troubleshooting and optimization
-  
-- **[Tradebook Guide](TRADEBOOK_GUIDE.md)** - Building and managing your tradebook
-  - CSV format and requirements
-  - Consolidating trade files
-  - Updating and maintaining tradebook
-  
-- **[Telegram Guide](TELEGRAM_GUIDE.md)** - Setting up automated notifications
-  - Creating Telegram bot
-  - Configuring notifications
-  - Running as background service
+1. **[Trade Processing and Portfolio Setup](TRADES_AND_PROCESSING_GUIDE.md)**
+   - Managing trade files and CSV formats
+   - Building and consolidating tradebook
+   - Creating year-end holdings snapshots
+   - Adding new trades and performance optimization
+   - 80-90% faster calculations with snapshots
+
+2. **[Portfolio Dashboard](PORTFOLIO_DASHBOARD_GUIDE.md)**
+   - Using the Streamlit dashboard
+   - Understanding all metrics (XIRR, P&L, etc.)
+   - Handling missing price data
+   - Performance and caching
+   - Troubleshooting
+
+3. **[Telegram Notifications](TELEGRAM_NOTIFICATIONS_GUIDE.md)**
+   - Setting up automated portfolio updates
+   - Configuring P/L alerts
+   - Running as background service
+   - Customization and troubleshooting
 
 ### Quick References
 
-- **[Quick Start](QUICK_START.txt)** - Fast setup commands
 - **[Requirements](requirements.txt)** - Python dependencies
+- **[Test Telegram](test_telegram.py)** - Verify Telegram bot setup
 
 ## 🎯 Workflow
 

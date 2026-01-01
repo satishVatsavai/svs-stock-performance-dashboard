@@ -16,27 +16,40 @@ def nse_get_advances_declines(*args, **kwargs):
     return None
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes (300 seconds)
-def load_portfolio_data():
+def load_portfolio_data(force_recalc=False):
     """Load and calculate portfolio data with caching to avoid repeated API calls"""
-    return calculate_detailed_portfolio()
+    return calculate_detailed_portfolio(force_full_recalc=force_recalc)
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="SV's Portfolio", layout="wide")
 
-# Add a refresh button in the header
-col_title, col_refresh = st.columns([6, 1])
+# Add refresh and force recalc buttons in the header
+col_title, col_recalc, col_refresh = st.columns([5, 1, 1])
 with col_title:
     st.title("📊 SV's Stock Portfolio")
-with col_refresh:
-    if st.button("🔄 Refresh Prices", help="Fetch latest stock prices"):
+with col_recalc:
+    if st.button("🔄 Full Recalc", help="Force full recalculation (ignore snapshots)"):
         st.cache_data.clear()
+        st.session_state['force_recalc'] = True
+        st.rerun()
+with col_refresh:
+    if st.button("💰 Refresh Prices", help="Fetch latest stock prices"):
+        st.cache_data.clear()
+        st.session_state.pop('force_recalc', None)
         st.rerun()
 
 # --- STEP 1: LOAD AND CALCULATE PORTFOLIO ---
 try:
+    # Check if force recalc is requested
+    force_recalc = st.session_state.get('force_recalc', False)
+    
     with st.spinner('Loading portfolio data and fetching live prices...'):
         # Use the cached function to avoid refetching on every page change
-        portfolio_rows, summary_metrics, df = load_portfolio_data()
+        portfolio_rows, summary_metrics, df = load_portfolio_data(force_recalc)
+        
+        # Clear force recalc flag after use
+        if force_recalc:
+            st.session_state.pop('force_recalc', None)
     
     if not portfolio_rows or not summary_metrics or df is None:
         st.error("❌ No portfolio data available. Please check your CSV files.")
@@ -68,7 +81,10 @@ try:
         # Define a function to highlight rows where P/L% is between 5% and 10%
         def highlight_pl_range(row):
             pl_value = row["P/L %"]
-            if 5 <= pl_value <= 10:
+            # Skip highlighting if P/L% is NaN (missing price data)
+            if pd.isna(pl_value):
+                return ['background-color: #FFA500; color: white'] * len(row)  # Orange for missing data
+            elif 5 <= pl_value <= 10:
                 return ['background-color: #006400; color: white'] * len(row)
             else:
                 return [''] * len(row)
@@ -77,16 +93,21 @@ try:
         styled_df = portfolio_df.style.apply(highlight_pl_range, axis=1).format({
             "Qty": "{:.2f}",
             "Avg Buy Price": "{:.2f}",
-            "Current Price": "{:.2f}",
+            "Current Price": lambda x: "N/A" if pd.isna(x) else f"{x:.2f}",
             "Invested Value (INR)": "{:.2f}",
-            "Current Value (INR)": "{:.2f}",
-            "P&L (INR)": "{:.2f}",
-            "P/L %": "{:.2f}"
+            "Current Value (INR)": lambda x: "N/A" if pd.isna(x) else f"{x:.2f}",
+            "P&L (INR)": lambda x: "N/A" if pd.isna(x) else f"{x:.2f}",
+            "P/L %": lambda x: "N/A" if pd.isna(x) else f"{x:.2f}"
         })
         
         # Calculate dynamic height: header (38px) + rows (35px each) + padding (10px)
         table_height = min(38 + (len(portfolio_df) * 35) + 10, 2000)
         st.dataframe(styled_df, width="stretch", height=table_height, hide_index=True)
+        
+        # Add a note about missing data
+        missing_count = portfolio_df["Current Price"].isna().sum()
+        if missing_count > 0:
+            st.warning(f"⚠️ {missing_count} holding(s) with missing price data (highlighted in orange). P/L and XIRR calculations exclude these holdings.")
     
     # --- TAB 2: TRADEBOOK ---
     with tab2:
