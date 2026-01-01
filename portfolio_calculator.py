@@ -510,19 +510,35 @@ def calculate_portfolio_summary(df=None):
                 cash_flows.append(sell['Qty'] * sell['Price'] * fx_rate)
                 cash_flow_dates.append(sell['Date'].date())
             
-            # Calculate realized profit
+            # Calculate realized profit using FIFO (for ALL tickers, even fully sold)
             if not sells_only.empty and not buys_only.empty:
-                avg_buy_price = (buys_only['Price'] * buys_only['Qty']).sum() / buy_qty
+                sorted_trades = ticker_trades.sort_values('Date').reset_index(drop=True)
                 
-                for _, sell in sells_only.iterrows():
-                    sell_revenue = sell['Qty'] * sell['Price'] * fx_rate
-                    sell_cost = sell['Qty'] * avg_buy_price * fx_rate
-                    realized_profit = sell_revenue - sell_cost
-                    total_realized_profit += realized_profit
+                buy_lots = []
+                for _, row in sorted_trades.iterrows():
+                    if row['Type'] == 'BUY':
+                        buy_lots.append({'qty': row['Qty'], 'price': row['Price']})
+                
+                for _, row in sorted_trades.iterrows():
+                    if row['Type'] == 'SELL':
+                        sell_qty_remaining = row['Qty']
+                        sell_price = row['Price']
+                        
+                        for lot in buy_lots:
+                            if sell_qty_remaining <= 0:
+                                break
+                            
+                            if lot['qty'] > 0:
+                                qty_to_match = min(lot['qty'], sell_qty_remaining)
+                                sell_revenue = qty_to_match * sell_price * fx_rate
+                                sell_cost = qty_to_match * lot['price'] * fx_rate
+                                total_realized_profit += (sell_revenue - sell_cost)
+                                lot['qty'] -= qty_to_match
+                                sell_qty_remaining -= qty_to_match
             
             current_qty = buy_qty - sell_qty
             
-            # Process current holdings
+            # Process current holdings (for invested amount and current value)
             if current_qty >= 0.001 and ticker in currently_held_tickers:
                 if ticker in market_data and market_data[ticker] is not None:
                     current_price = market_data[ticker]
@@ -530,8 +546,8 @@ def calculate_portfolio_summary(df=None):
                 else:
                     continue
                 
-                fx_rate = ticker_trades['Exchange_Rate'].iloc[0]
-                avg_buy_price = (buys_only['Price'] * buys_only['Qty']).sum() / buy_qty
+                # Use FIFO for average price calculation
+                avg_buy_price = calculate_fifo_avg_price(ticker_trades)
                 
                 invested_amt = float(current_qty) * float(avg_buy_price) * float(fx_rate)
                 current_amt = float(current_qty) * float(current_price) * float(fx_rate)
@@ -641,7 +657,60 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
             currently_held_tickers = [ticker for ticker, data in holdings.items() if data['qty'] >= 0.02]
             
             # Calculate total realized profit from snapshot + incremental
-            total_realized_profit = sum(data['realized_profit'] for data in holdings.values())
+            # IMPORTANT: Snapshot only includes realized profit for tickers with remaining holdings
+            # We need to add realized profit from fully sold tickers
+            total_realized_profit_from_holdings = sum(data['realized_profit'] for data in holdings.values())
+            
+            # Calculate realized profit from fully sold tickers (not in snapshot)
+            realized_profit_from_fully_sold = 0.0
+            all_tickers = full_df['Ticker'].unique()
+            
+            for ticker in all_tickers:
+                # Skip tickers that are still held (already counted above)
+                if ticker in holdings:
+                    continue
+                
+                # This ticker is fully sold - calculate its realized profit
+                ticker_trades = full_df[full_df['Ticker'] == ticker].sort_values('Date')
+                
+                buy_qty = ticker_trades[ticker_trades['Type'] == 'BUY']['Qty'].sum()
+                sell_qty = ticker_trades[ticker_trades['Type'] == 'SELL']['Qty'].sum()
+                
+                # Verify it's fully sold
+                if buy_qty - sell_qty >= 0.001 or sell_qty == 0:
+                    continue
+                
+                # Calculate realized profit using FIFO
+                fx_rate = ticker_trades['Exchange_Rate'].iloc[0]
+                buy_lots = []
+                
+                for _, row in ticker_trades.iterrows():
+                    if row['Type'] == 'BUY':
+                        buy_lots.append({'qty': row['Qty'], 'price': row['Price']})
+                
+                for _, row in ticker_trades.iterrows():
+                    if row['Type'] == 'SELL':
+                        sell_qty_remaining = row['Qty']
+                        sell_price = row['Price']
+                        
+                        for lot in buy_lots:
+                            if sell_qty_remaining <= 0:
+                                break
+                            
+                            if lot['qty'] > 0:
+                                qty_to_match = min(lot['qty'], sell_qty_remaining)
+                                sell_revenue = qty_to_match * sell_price * fx_rate
+                                sell_cost = qty_to_match * lot['price'] * fx_rate
+                                realized_profit_from_fully_sold += (sell_revenue - sell_cost)
+                                lot['qty'] -= qty_to_match
+                                sell_qty_remaining -= qty_to_match
+            
+            total_realized_profit = total_realized_profit_from_holdings + realized_profit_from_fully_sold
+            
+            print(f"💰 Realized Profit Breakdown:")
+            print(f"   From holdings (snapshot): ₹{total_realized_profit_from_holdings:,.2f}")
+            print(f"   From fully sold: ₹{realized_profit_from_fully_sold:,.2f}")
+            print(f"   Total: ₹{total_realized_profit:,.2f}")
             
             # Use cash flows from snapshot if available
             if snapshot_cash_flows and snapshot_cash_flow_dates:
@@ -700,9 +769,6 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
                 sell_qty = ticker_trades[ticker_trades['Type'] == 'SELL']['Qty'].sum()
                 current_qty = buy_qty - sell_qty
                 
-                if current_qty < 0.02:
-                    continue
-                
                 buys_only = ticker_trades[ticker_trades['Type'] == 'BUY']
                 sells_only = ticker_trades[ticker_trades['Type'] == 'SELL']
                 
@@ -710,16 +776,7 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
                 currency = ticker_trades['Currency'].iloc[0]
                 is_sgb = ticker_trades['Is_SGB'].iloc[0] if 'Is_SGB' in ticker_trades.columns else False
                 
-                # Add to cash flows
-                for _, buy in buys_only.iterrows():
-                    cash_flows.append(-(buy['Qty'] * buy['Price'] * fx_rate))
-                    cash_flow_dates.append(buy['Date'].date())
-                
-                for _, sell in sells_only.iterrows():
-                    cash_flows.append(sell['Qty'] * sell['Price'] * fx_rate)
-                    cash_flow_dates.append(sell['Date'].date())
-                
-                # Calculate realized profit using FIFO
+                # Calculate realized profit using FIFO (for ALL tickers, even fully sold)
                 realized_profit = 0.0
                 if not sells_only.empty and not buys_only.empty:
                     sorted_trades = ticker_trades.sort_values('Date').reset_index(drop=True)
@@ -748,7 +805,21 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
                                     lot['qty'] -= qty_to_match
                                     sell_qty_remaining -= qty_to_match
                 
+                # Add realized profit to total (even if ticker is fully sold)
                 total_realized_profit += realized_profit
+                
+                # Skip adding to holdings if fully sold
+                if current_qty < 0.02:
+                    continue
+                
+                # Add to cash flows (only for current holdings for XIRR calculation)
+                for _, buy in buys_only.iterrows():
+                    cash_flows.append(-(buy['Qty'] * buy['Price'] * fx_rate))
+                    cash_flow_dates.append(buy['Date'].date())
+                
+                for _, sell in sells_only.iterrows():
+                    cash_flows.append(sell['Qty'] * sell['Price'] * fx_rate)
+                    cash_flow_dates.append(sell['Date'].date())
                 
                 # Calculate FIFO average price
                 avg_buy_price = calculate_fifo_avg_price(ticker_trades)
