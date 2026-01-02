@@ -377,13 +377,15 @@ def calculate_fifo_avg_price(ticker_trades):
         return 0
 
 
-def apply_incremental_trades(snapshot_df, incremental_df):
+def apply_incremental_trades(snapshot_df, incremental_df, full_df=None, snapshot_year=None):
     """
     Apply incremental trades to snapshot holdings
     
     Args:
         snapshot_df: Holdings snapshot dataframe
         incremental_df: New trades after snapshot
+        full_df: Full tradebook (needed to calculate historical realized profit for rebought tickers)
+        snapshot_year: Year of the snapshot (needed to identify historical trades)
     
     Returns:
         Dictionary with ticker as key and holding info as value
@@ -410,11 +412,51 @@ def apply_incremental_trades(snapshot_df, incremental_df):
             # Initialize if new ticker
             if ticker not in holdings:
                 first_trade = ticker_trades.iloc[0]
+                
+                # IMPORTANT: Calculate historical realized profit for rebought tickers
+                # If this ticker was sold before snapshot and rebought after, we need its historical profit
+                historical_realized_profit = 0.0
+                if full_df is not None and snapshot_year is not None:
+                    snapshot_date = pd.Timestamp(f'{snapshot_year}-12-31 23:59:59')
+                    historical_trades = full_df[
+                        (full_df['Ticker'] == ticker) & 
+                        (full_df['Date'] <= snapshot_date)
+                    ].sort_values('Date')
+                    
+                    if len(historical_trades) > 0:
+                        # Check if it had sells before snapshot
+                        has_historical_sells = (historical_trades['Type'] == 'SELL').any()
+                        if has_historical_sells:
+                            # Calculate realized profit from historical trades using FIFO
+                            fx_rate_hist = historical_trades['Exchange_Rate'].iloc[0]
+                            buy_lots_hist = []
+                            
+                            for _, row in historical_trades.iterrows():
+                                if row['Type'] == 'BUY':
+                                    buy_lots_hist.append({'qty': row['Qty'], 'price': row['Price']})
+                            
+                            for _, row in historical_trades.iterrows():
+                                if row['Type'] == 'SELL':
+                                    sell_qty_remaining = row['Qty']
+                                    sell_price = row['Price']
+                                    
+                                    for lot in buy_lots_hist:
+                                        if sell_qty_remaining <= 0:
+                                            break
+                                        
+                                        if lot['qty'] > 0:
+                                            qty_to_match = min(lot['qty'], sell_qty_remaining)
+                                            sell_revenue = qty_to_match * sell_price * fx_rate_hist
+                                            sell_cost = qty_to_match * lot['price'] * fx_rate_hist
+                                            historical_realized_profit += (sell_revenue - sell_cost)
+                                            lot['qty'] -= qty_to_match
+                                            sell_qty_remaining -= qty_to_match
+                
                 holdings[ticker] = {
                     'qty': 0.0,
                     'avg_price': 0.0,
                     'invested_inr': 0.0,
-                    'realized_profit': 0.0,
+                    'realized_profit': historical_realized_profit,  # Use calculated historical profit
                     'currency': first_trade['Currency'],
                     'fx_rate': first_trade['Exchange_Rate'],
                     'is_sgb': first_trade.get('Is_SGB', False),
@@ -659,8 +701,8 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
         total_realized_profit = 0.0
         
         if use_snapshot:
-            # Apply incremental trades to snapshot
-            holdings = apply_incremental_trades(snapshot_df, calc_df)
+            # Apply incremental trades to snapshot (pass full_df and snapshot_year for historical realized profit)
+            holdings = apply_incremental_trades(snapshot_df, calc_df, full_df, snapshot_year)
             
             # Get list of currently held tickers
             currently_held_tickers = [ticker for ticker, data in holdings.items() if data['qty'] >= 0.02]
@@ -671,33 +713,50 @@ def calculate_detailed_portfolio(df=None, force_full_recalc=False):
             total_realized_profit_from_holdings = sum(data['realized_profit'] for data in holdings.values())
             
             # Calculate realized profit from fully sold tickers (not in snapshot)
+            # IMPORTANT: This includes tickers that were fully sold by snapshot date
+            # but may have been rebought after the snapshot
             realized_profit_from_fully_sold = 0.0
             all_tickers = full_df['Ticker'].unique()
+            
+            # Get snapshot date
+            snapshot_date = pd.Timestamp(f'{snapshot_year}-12-31 23:59:59')
             
             for ticker in all_tickers:
                 # Skip tickers that are still held (already counted above)
                 if ticker in holdings:
                     continue
                 
-                # This ticker is fully sold - calculate its realized profit
+                # This ticker is not in snapshot - check if it had any sells
                 ticker_trades = full_df[full_df['Ticker'] == ticker].sort_values('Date')
                 
-                buy_qty = ticker_trades[ticker_trades['Type'] == 'BUY']['Qty'].sum()
-                sell_qty = ticker_trades[ticker_trades['Type'] == 'SELL']['Qty'].sum()
-                
-                # Verify it's fully sold
-                if buy_qty - sell_qty >= 0.001 or sell_qty == 0:
+                has_sells = (ticker_trades['Type'] == 'SELL').any()
+                if not has_sells:
                     continue
                 
-                # Calculate realized profit using FIFO
+                # Check if ticker was fully sold by the snapshot date
+                # (it may have been rebought after snapshot in incremental trades)
+                trades_up_to_snapshot = ticker_trades[ticker_trades['Date'] <= snapshot_date]
+                
+                if len(trades_up_to_snapshot) == 0:
+                    continue  # No trades before snapshot
+                
+                buy_qty_snapshot = trades_up_to_snapshot[trades_up_to_snapshot['Type'] == 'BUY']['Qty'].sum()
+                sell_qty_snapshot = trades_up_to_snapshot[trades_up_to_snapshot['Type'] == 'SELL']['Qty'].sum()
+                
+                # If not fully sold by snapshot date, skip (this is unusual and shouldn't happen)
+                if buy_qty_snapshot - sell_qty_snapshot >= 0.001 or sell_qty_snapshot == 0:
+                    continue
+                
+                # Calculate realized profit using FIFO for all historical sells
+                # (only process trades up to snapshot date, not rebought trades)
                 fx_rate = ticker_trades['Exchange_Rate'].iloc[0]
                 buy_lots = []
                 
-                for _, row in ticker_trades.iterrows():
+                for _, row in trades_up_to_snapshot.iterrows():
                     if row['Type'] == 'BUY':
                         buy_lots.append({'qty': row['Qty'], 'price': row['Price']})
                 
-                for _, row in ticker_trades.iterrows():
+                for _, row in trades_up_to_snapshot.iterrows():
                     if row['Type'] == 'SELL':
                         sell_qty_remaining = row['Qty']
                         sell_price = row['Price']
