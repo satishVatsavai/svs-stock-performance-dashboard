@@ -41,9 +41,18 @@ load_dotenv()
 # CONFIGURATION
 # ============================================================================
 
-TRADEBOOK_FILE = 'tradebook.csv'
-PROCESSED_FILES_METADATA = 'tradebook_processed_files.json'
-SGB_PRICE_CACHE_FILE = 'sgb_price_cache.json'
+# Determine the working directory - always use archivesCSV
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+WORKING_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'archivesCSV')
+
+# Ensure working directory exists
+if not os.path.exists(WORKING_DIR):
+    print(f"❌ Error: archivesCSV directory not found at {WORKING_DIR}")
+    exit(1)
+
+TRADEBOOK_FILE = os.path.join(WORKING_DIR, 'tradebook.csv')
+PROCESSED_FILES_METADATA = os.path.join(WORKING_DIR, 'tradebook_processed_files.json')
+SGB_PRICE_CACHE_FILE = os.path.join(WORKING_DIR, 'sgb_price_cache.json')
 CACHE_VALIDITY_HOURS = 6
 FALLBACK_USD_INR_RATE = float(os.getenv('FALLBACK_USD_INR_RATE', '90.0'))
 
@@ -56,8 +65,8 @@ _exchange_rate_session_cache = {}
 # ============================================================================
 
 def get_trade_files():
-    """Get all trade CSV files in the current directory"""
-    trade_files = glob.glob('trades*.csv') + glob.glob('SGBs.csv')
+    """Get all trade CSV files in the archivesCSV directory"""
+    trade_files = glob.glob(os.path.join(WORKING_DIR, 'trades*.csv')) + glob.glob(os.path.join(WORKING_DIR, 'SGBs.csv'))
     return [f for f in trade_files if os.path.isfile(f)]
 
 
@@ -66,7 +75,25 @@ def load_processed_files_metadata():
     if os.path.exists(PROCESSED_FILES_METADATA):
         try:
             with open(PROCESSED_FILES_METADATA, 'r') as f:
-                return json.load(f)
+                metadata = json.load(f)
+                
+                # Convert old formats to new simplified format if needed
+                converted = {}
+                for filename, value in metadata.items():
+                    if isinstance(value, (int, float)):
+                        # Old format: Unix timestamp - convert to ISO string
+                        converted[filename] = datetime.fromtimestamp(value).strftime('%Y-%m-%d %H:%M:%S')
+                    elif isinstance(value, dict):
+                        # Dict format with both timestamp and modified_time - extract modified_time
+                        converted[filename] = value.get('modified_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                    elif isinstance(value, str):
+                        # New format: already a string
+                        converted[filename] = value
+                    else:
+                        # Unexpected format - skip
+                        continue
+                
+                return converted
         except json.JSONDecodeError:
             print(f"⚠️ Warning: Could not read {PROCESSED_FILES_METADATA}, starting fresh")
             return {}
@@ -74,9 +101,9 @@ def load_processed_files_metadata():
 
 
 def save_processed_files_metadata(metadata):
-    """Save metadata about processed files"""
+    """Save metadata about processed files in human-readable format"""
     with open(PROCESSED_FILES_METADATA, 'w') as f:
-        json.dump(metadata, f, indent=2)
+        json.dump(metadata, f, indent=2, sort_keys=True)
 
 
 def get_file_modification_time(filepath):
@@ -84,13 +111,33 @@ def get_file_modification_time(filepath):
     return os.path.getmtime(filepath)
 
 
+def get_file_modification_time_string(filepath):
+    """Get file modification time as a human-readable string"""
+    mtime = os.path.getmtime(filepath)
+    return datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+
+
 def identify_new_or_modified_files(trade_files, metadata):
     """Identify which files are new or have been modified since last processing"""
     new_or_modified = []
     
     for filepath in trade_files:
+        # Use basename for metadata key to ensure consistency
+        file_key = os.path.basename(filepath)
         current_mtime = get_file_modification_time(filepath)
-        processed_mtime = metadata.get(filepath, 0)
+        
+        # Get stored timestamp string and convert to Unix timestamp for comparison
+        if file_key in metadata:
+            stored_time_str = metadata[file_key]
+            try:
+                # Parse the stored time string to Unix timestamp
+                stored_dt = datetime.strptime(stored_time_str, '%Y-%m-%d %H:%M:%S')
+                processed_mtime = stored_dt.timestamp()
+            except (ValueError, AttributeError):
+                # If parsing fails, treat as not processed
+                processed_mtime = 0
+        else:
+            processed_mtime = 0
         
         if current_mtime > processed_mtime:
             new_or_modified.append(filepath)
@@ -103,8 +150,8 @@ def parse_trade_file(filepath):
     try:
         df = pd.read_csv(filepath)
         
-        # Add source file column
-        df['Source_File'] = filepath
+        # Add source file column using basename only
+        df['Source_File'] = os.path.basename(filepath)
         
         # Detect if it's an SGB file
         is_sgb = 'SGB' in filepath or (
@@ -290,29 +337,46 @@ def load_or_create_tradebook():
         if new_files:
             print(f"🔄 Found {len(new_files)} new or modified file(s) to process:")
             for filepath in new_files:
-                print(f"   - {filepath}")
+                print(f"   - {os.path.basename(filepath)}")
             
             # Parse and append new trades
             new_trades = []
             for filepath in new_files:
-                print(f"   Parsing {filepath}...")
+                file_basename = os.path.basename(filepath)
+                print(f"   Parsing {file_basename}...")
                 file_df = parse_trade_file(filepath)
                 
                 if file_df is not None and not file_df.empty:
+                    # Check if trades from this file already exist in tradebook
+                    existing_from_file = df[df['Source_File'] == file_basename]
+                    
+                    if len(existing_from_file) > 0:
+                        print(f"   ⚠️  Found {len(existing_from_file)} existing trades from {file_basename}")
+                        print(f"   🔍 Checking for duplicates...")
+                        
+                        # Remove existing trades from this file to avoid duplicates
+                        df = df[df['Source_File'] != file_basename]
+                        print(f"   🗑️  Removed existing trades from {file_basename}")
+                    
                     new_trades.append(file_df)
-                    # Update metadata
-                    metadata[filepath] = get_file_modification_time(filepath)
+                    # Update metadata using new format
+                    metadata[file_basename] = get_file_modification_time_string(filepath)
             
             if new_trades:
                 # Combine new trades
                 new_df = pd.concat(new_trades, ignore_index=True)
-                print(f"   ✅ Parsed {len(new_df)} new trades")
+                print(f"   ✅ Parsed {len(new_df)} trades from modified file(s)")
                 
                 # Add exchange rates to new trades
                 new_df = add_exchange_rates_to_trades(new_df)
                 
                 # Append to existing tradebook
                 df = pd.concat([df, new_df], ignore_index=True)
+                
+                # Sort by date to keep chronological order
+                df['Date'] = pd.to_datetime(df['Date'])
+                df = df.sort_values('Date').reset_index(drop=True)
+                df['Date'] = df['Date'].dt.strftime('%Y-%m-%d')
                 
                 # Save updated tradebook
                 df.to_csv(TRADEBOOK_FILE, index=False)
@@ -332,13 +396,13 @@ def load_or_create_tradebook():
         
         all_trades = []
         for filepath in trade_files:
-            print(f"   Parsing {filepath}...")
+            print(f"   Parsing {os.path.basename(filepath)}...")
             file_df = parse_trade_file(filepath)
             
             if file_df is not None and not file_df.empty:
                 all_trades.append(file_df)
-                # Update metadata
-                metadata[filepath] = get_file_modification_time(filepath)
+                # Update metadata using new format
+                metadata[os.path.basename(filepath)] = get_file_modification_time_string(filepath)
         
         if not all_trades:
             print("⚠️ No trade data found in source files")
@@ -357,8 +421,7 @@ def load_or_create_tradebook():
         df.to_csv(TRADEBOOK_FILE, index=False)
         save_processed_files_metadata(metadata)
         
-        print(f"✅ Created tradebook: {TRADEBOOK_FILE}")
-        print(f"   Total trades: {len(df)}")
+        print(f"✅ Created tradebook: {len(df)} trades")
         
         return df
 
@@ -582,10 +645,13 @@ def tradebook_status():
         print(f"   Processed files tracked: {len(metadata)}")
         print()
         print("   Already processed:")
-        for filepath in sorted(metadata.keys()):
-            mtime = datetime.fromtimestamp(metadata[filepath]).strftime('%Y-%m-%d %H:%M:%S')
-            exists = "✅" if os.path.exists(filepath) else "🗑️ (deleted)"
-            print(f"     {exists} {filepath} (processed: {mtime})")
+        for file_key in sorted(metadata.keys()):
+            # Metadata is now simply a string in 'YYYY-MM-DD HH:MM:SS' format
+            mtime_str = metadata[file_key]
+            
+            full_path = os.path.join(WORKING_DIR, file_key)
+            exists = "✅" if os.path.exists(full_path) else "🗑️ (deleted)"
+            print(f"     {exists} {file_key} (processed: {mtime_str})")
     else:
         print("❌ Metadata does not exist")
     
@@ -598,18 +664,30 @@ def tradebook_status():
         metadata = load_processed_files_metadata()
         
         for filepath in sorted(trade_files):
+            file_key = os.path.basename(filepath)
             current_mtime = get_file_modification_time(filepath)
-            processed_mtime = metadata.get(filepath, 0)
+            
+            # Get stored timestamp string and convert for comparison
+            if file_key in metadata:
+                stored_time_str = metadata[file_key]
+                try:
+                    stored_dt = datetime.strptime(stored_time_str, '%Y-%m-%d %H:%M:%S')
+                    processed_mtime = stored_dt.timestamp()
+                except (ValueError, AttributeError):
+                    processed_mtime = 0
+            else:
+                processed_mtime = 0
             
             mtime_str = datetime.fromtimestamp(current_mtime).strftime('%Y-%m-%d %H:%M:%S')
             
-            if current_mtime > processed_mtime:
+            # Add 1-second tolerance to handle timestamp precision differences
+            if current_mtime > processed_mtime + 1:
                 status = "🔄 NEW/MODIFIED - Will be processed"
             else:
                 status = "✅ Already processed"
             
             print(f"     {status}")
-            print(f"        {filepath} (modified: {mtime_str})")
+            print(f"        {file_key} (modified: {mtime_str})")
     else:
         print("   ℹ️  No source trade files found")
         print("   This is normal if all trades have been consolidated into tradebook.csv")
@@ -667,19 +745,20 @@ def consolidate_trades():
     
     can_delete = []
     for filepath in trade_files:
-        if filepath in metadata:
-            can_delete.append(filepath)
+        file_key = os.path.basename(filepath)
+        if file_key in metadata:
+            can_delete.append(os.path.basename(filepath))
     
     if can_delete:
         print("💡 The following source files have been processed and can be safely deleted:")
         print()
-        for filepath in sorted(can_delete):
-            print(f"   📄 {filepath}")
+        for filename in sorted(can_delete):
+            print(f"   📄 {filename}")
         print()
-        print("   To delete them, run:")
-        print(f"   rm {' '.join(can_delete)}")
+        print("   To delete them from archivesCSV directory, run:")
+        print(f"   cd {WORKING_DIR} && rm {' '.join(can_delete)}")
     else:
-        print("ℹ️  No source files to clean up.")
+        print("ℹ️  No source files to delete (none have been fully processed yet)")
 
 
 def show_help():

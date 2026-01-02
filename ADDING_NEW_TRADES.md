@@ -17,7 +17,7 @@ Add new rows with your trade data and save the file.
 
 ```bash
 cd archivesCSV
-python3 ../archivesPY/tradebook_builder.py consolidate
+python ../archivesPY/tradebook_builder.py consolidate
 ```
 
 **What happens:**
